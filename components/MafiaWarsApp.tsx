@@ -1,13 +1,16 @@
+'use client'
+
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
-import './App.css'
-import cardBackImage from './Back side of the Card.png'
-import landingPageImage from './Landing page Img..png'
-import godfatherImage from './God Father.png'
-import mafiaImage from './Mafia\'s.png'
-import grandmotherImage from './Grand Mother.png'
-import doctorImage from './Doctor.png'
-import detectiveImage from './Detective.png'
-import civiliansImage from './Civilians.png'
+import './MafiaWarsApp.css'
+
+const cardBackImage = '/images/card-back.png'
+const landingPageImage = '/images/landing.png'
+const godfatherImage = '/images/godfather.png'
+const mafiaImage = '/images/mafia.png'
+const grandmotherImage = '/images/grandmother.png'
+const doctorImage = '/images/doctor.png'
+const detectiveImage = '/images/detective.png'
+const civiliansImage = '/images/civilians.png'
 
 type Mode = 'landing' | 'mode-select' | 'lobby' | 'game' | 'summary'
 type PlayType = 'online' | 'offline'
@@ -76,7 +79,7 @@ function generateRoomCode() {
   return Math.random().toString(36).slice(2, 7).toUpperCase()
 }
 
-function App() {
+function MafiaWarsApp() {
   const [mode, setMode] = useState<Mode>('landing')
   const [playType, setPlayType] = useState<PlayType | null>(null)
   const [roomConfig, setRoomConfig] = useState<RoomConfig>({
@@ -1715,4 +1718,4 @@ function App() {
   return content
 }
 
-export default App
+export default MafiaWarsApp
