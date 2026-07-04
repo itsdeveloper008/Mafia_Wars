@@ -131,9 +131,13 @@ export function useGameSession() {
           sessionStorage.clearRoom()
         }
       } catch (e) {
+        // Restore is best-effort — never block Create/Join with a sticky error
         const err = toUserError(e)
-        setError(err.userMessage)
-        logger.error('session.restore_failed', { message: err.userMessage })
+        sessionStorage.clearRoom()
+        logger.warn('session.restore_failed', {
+          message: err.userMessage,
+          code: err.code,
+        })
       } finally {
         if (!cancelled) setRestoring(false)
       }

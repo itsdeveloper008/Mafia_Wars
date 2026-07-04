@@ -15,9 +15,14 @@ function push(level: LogLevel, event: string, data?: Record<string, unknown>) {
   buffer.push(entry)
   if (buffer.length > MAX) buffer.shift()
 
+  // Use warn/log only — console.error triggers Next.js error overlays for handled failures
   if (process.env.NODE_ENV !== 'production') {
-    const fn = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log
-    fn(`[mafia] ${event}`, data ?? '')
+    const payload = data && Object.keys(data).length ? data : undefined
+    if (level === 'error' || level === 'warn') {
+      console.warn(`[mafia] ${event}`, payload ?? '')
+    } else {
+      console.log(`[mafia] ${event}`, payload ?? '')
+    }
   }
 }
 
