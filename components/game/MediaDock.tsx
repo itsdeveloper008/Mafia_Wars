@@ -139,6 +139,13 @@ export function MediaDock({
         </div>
       </div>
 
+      {connection === 'connected' && (
+        <p className="text-xs text-mw-success">
+          Voice is live. Click <strong>Mic On</strong> and speak — others should hear you.
+          Click anywhere on the page once if you cannot hear anyone yet.
+        </p>
+      )}
+
       {!videoAllowed && (
         <p className="text-xs text-mw-muted">
           Camera is off for this room. Host can enable <strong>Video channel</strong> in
@@ -148,6 +155,16 @@ export function MediaDock({
 
       {voiceError && (
         <p className="text-xs text-mw-danger">{voiceError}</p>
+      )}
+
+      {connection === 'connecting' && (
+        <p className="text-xs text-mw-warning">Connecting to voice… allow microphone access.</p>
+      )}
+
+      {(connection === 'disconnected' || connection === 'idle') && (
+        <p className="text-xs text-mw-danger">
+          Voice not connected. Allow microphone permission and refresh the page.
+        </p>
       )}
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">

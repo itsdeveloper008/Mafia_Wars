@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   VoiceRoom,
   type VoiceConnectionState,
@@ -20,6 +20,7 @@ export function useVoiceRoom(session: GameSession | null) {
   const [remoteStreams, setRemoteStreams] = useState<
     Record<string, MediaStream>
   >({})
+  const connectingRef = useRef(false)
 
   const room = session?.room
   const me = session?.me
@@ -36,17 +37,17 @@ export function useVoiceRoom(session: GameSession | null) {
   const shouldConnect = Boolean(
     room &&
       uid &&
-      settings?.voiceEnabled &&
-      settings.mediaMode !== 'none' &&
+      settings?.voiceEnabled !== false &&
+      settings?.mediaMode !== 'none' &&
       (isHost || me),
   )
 
   const canTransmit = useCallback(() => {
     if (!session || !settings || !uid) return false
-    if (!settings.voiceEnabled || settings.voiceLocked) return false
+    if (settings.voiceEnabled === false || settings.voiceLocked) return false
+    // Host and players can talk in lobby + discussion; mute only at night
     if (session.state.status === 'night') return false
 
-    // Host may always speak when mic is on
     if (isHost) return hostMicOn
 
     if (!me) return false
@@ -54,7 +55,11 @@ export function useVoiceRoom(session: GameSession | null) {
     if (!me.isAlive && !settings.spectatorVoiceEnabled) return false
 
     if (settings.discussionMode === 'moderated') {
-      return room?.currentSpeakerId === me.playerId || me.canSpeak
+      // In moderated mode, allow open mic unless someone has the floor
+      if (room?.currentSpeakerId) {
+        return room.currentSpeakerId === me.playerId
+      }
+      return me.micEnabled
     }
     if (
       settings.discussionMode === 'push_to_talk' ||
@@ -62,7 +67,6 @@ export function useVoiceRoom(session: GameSession | null) {
     ) {
       return pushToTalk || me.pushToTalkHeld
     }
-    // Default free discussion: mic on if player enabled it (default true after join fix)
     return me.micEnabled
   }, [
     session,
@@ -82,17 +86,35 @@ export function useVoiceRoom(session: GameSession | null) {
     return Boolean(me?.cameraEnabled && me.isAlive)
   }, [settings, videoAllowed, session?.state.status, isHost, hostCamOn, me])
 
-  // Connect host + players to the same voice/video mesh
+  // Unlock audio on any user gesture (required by browsers)
+  useEffect(() => {
+    const unlock = () => {
+      void VoiceRoom.unlockAudio()
+    }
+    window.addEventListener('pointerdown', unlock)
+    window.addEventListener('keydown', unlock)
+    return () => {
+      window.removeEventListener('pointerdown', unlock)
+      window.removeEventListener('keydown', unlock)
+    }
+  }, [])
+
+  // Connect once per room membership
   useEffect(() => {
     if (!shouldConnect || !room || !uid) {
-      void VoiceRoom.disconnect()
+      if (connectingRef.current) {
+        connectingRef.current = false
+        void VoiceRoom.disconnect()
+      }
       setConnection('idle')
       setLocalStream(null)
       setRemoteStreams({})
+      setPeerCount(0)
       return
     }
 
     let active = true
+    connectingRef.current = true
     setVoiceError('')
 
     VoiceRoom.configure({
@@ -116,6 +138,7 @@ export function useVoiceRoom(session: GameSession | null) {
           else next[id] = stream
           return next
         })
+        void VoiceRoom.unlockAudio()
       },
       onSpeaking: (identity, speaking) => {
         if (!active || !room) return
@@ -144,47 +167,34 @@ export function useVoiceRoom(session: GameSession | null) {
       roomName: `mafia-${room.roomCode}`,
       identity: uid,
       name: displayName,
-      enableMic: isHost ? hostMicOn : Boolean(me?.micEnabled ?? true),
-      enableCam: isHost ? hostCamOn : Boolean(me?.cameraEnabled && videoAllowed),
+      enableMic: true, // start with mic track live; canTransmit gates it
+      enableCam: videoAllowed,
     }).then((state) => {
-      if (active) setConnection(state)
+      if (!active) return
+      setConnection(state)
+      // Apply current intent immediately
+      void VoiceRoom.setMicEnabled(canTransmit())
+      void VoiceRoom.setCamEnabled(canShowCam())
+      void VoiceRoom.unlockAudio()
     })
 
     return () => {
       active = false
+      connectingRef.current = false
       void VoiceRoom.disconnect()
     }
-    // Reconnect only when room/identity/video setting changes — not on every mic toggle
+    // Only reconnect when room identity changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    shouldConnect,
-    room?.roomId,
-    room?.roomCode,
-    uid,
-    displayName,
-    settings?.voiceEnabled,
-    videoAllowed,
-    isHost,
-  ])
+  }, [shouldConnect, room?.roomId, uid, isHost])
 
-  // Mic transmit
+  // Mic transmit — do not reconnect, only toggle tracks
   useEffect(() => {
     void VoiceRoom.setMicEnabled(canTransmit())
-  }, [
-    canTransmit,
-    me?.micEnabled,
-    me?.hostMuted,
-    me?.isAlive,
-    pushToTalk,
-    hostMicOn,
-    room?.currentSpeakerId,
-    session?.state.status,
-  ])
+  }, [canTransmit])
 
-  // Camera transmit
   useEffect(() => {
     void VoiceRoom.setCamEnabled(canShowCam())
-  }, [canShowCam, me?.cameraEnabled, hostCamOn, videoAllowed, session?.state.status])
+  }, [canShowCam])
 
   useEffect(() => {
     if (!me || !room || isHost) return
@@ -198,34 +208,41 @@ export function useVoiceRoom(session: GameSession | null) {
       void VoiceRoom.setMicEnabled(false)
       void VoiceRoom.setCamEnabled(false)
     }
-  }, [me?.isAlive, me?.playerId, room?.roomId, settings?.spectatorVoiceEnabled, isHost])
+  }, [
+    me?.isAlive,
+    me?.playerId,
+    room?.roomId,
+    settings?.spectatorVoiceEnabled,
+    isHost,
+  ])
 
   useEffect(() => {
     if (session?.state.status === 'night') {
       void VoiceRoom.setMicEnabled(false)
       void VoiceRoom.setCamEnabled(false)
+    } else {
+      void VoiceRoom.setMicEnabled(canTransmit())
+      void VoiceRoom.setCamEnabled(canShowCam())
     }
-  }, [session?.state.status])
-
-  // Players default mic ON when they join voice (free discussion)
-  useEffect(() => {
-    if (!me || !room || isHost) return
-    if (me.micEnabled === false && settings?.discussionMode === 'free') {
-      // leave as-is if user muted; only set default once if undefined-like
-    }
-  }, [me, room, isHost, settings?.discussionMode])
+  }, [session?.state.status, canTransmit, canShowCam])
 
   const holdPushToTalk = useCallback(
     (held: boolean) => {
       setPushToTalk(held)
+      void VoiceRoom.unlockAudio()
       if (isHost) {
-        void VoiceRoom.setMicEnabled(held || hostMicOn)
+        if (held) {
+          setHostMicOn(true)
+          void VoiceRoom.setMicEnabled(true)
+        } else {
+          void VoiceRoom.setMicEnabled(hostMicOn)
+        }
         return
       }
       if (!me || !room) return
       void updatePlayerFields(room.roomId, me.playerId, {
         pushToTalkHeld: held,
-        micEnabled: held,
+        micEnabled: held ? true : me.micEnabled,
       })
       void VoiceRoom.setMicEnabled(held)
     },
@@ -233,6 +250,7 @@ export function useVoiceRoom(session: GameSession | null) {
   )
 
   const toggleHostMic = useCallback(() => {
+    void VoiceRoom.unlockAudio()
     setHostMicOn((v) => {
       const next = !v
       void VoiceRoom.setMicEnabled(next)
@@ -241,6 +259,7 @@ export function useVoiceRoom(session: GameSession | null) {
   }, [])
 
   const toggleHostCam = useCallback(() => {
+    void VoiceRoom.unlockAudio()
     setHostCamOn((v) => {
       const next = !v
       void VoiceRoom.setCamEnabled(next)
@@ -250,6 +269,7 @@ export function useVoiceRoom(session: GameSession | null) {
 
   const togglePlayerMic = useCallback(async () => {
     if (!me || !room) return
+    void VoiceRoom.unlockAudio()
     const next = !me.micEnabled
     await updatePlayerFields(room.roomId, me.playerId, { micEnabled: next })
     void VoiceRoom.setMicEnabled(next)
@@ -257,8 +277,9 @@ export function useVoiceRoom(session: GameSession | null) {
 
   const togglePlayerCam = useCallback(async () => {
     if (!me || !room) return
+    void VoiceRoom.unlockAudio()
     if (!videoAllowed) {
-      setVoiceError('Host has not enabled video for this room.')
+      setVoiceError('Enable Video channel in room settings first.')
       return
     }
     const next = !me.cameraEnabled

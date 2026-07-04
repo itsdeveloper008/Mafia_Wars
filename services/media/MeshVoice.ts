@@ -27,6 +27,7 @@ const ICE_SERVERS: RTCConfiguration = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
   ],
 }
 
@@ -39,12 +40,23 @@ export type MeshCallbacks = {
   onError?: (message: string) => void
 }
 
+type PeerState = {
+  pc: RTCPeerConnection
+  makingOffer: boolean
+  ignoreOffer: boolean
+  polite: boolean
+  pendingIce: RTCIceCandidateInit[]
+}
+
+/**
+ * Reliable small-room WebRTC mesh (Firestore signaling).
+ * Uses perfect negotiation to avoid glare / one-way audio.
+ */
 export class MeshVoiceService {
   private roomId = ''
   private uid = ''
   private localStream: MediaStream | null = null
-  private peers = new Map<string, RTCPeerConnection>()
-  private makingOffer = new Set<string>()
+  private peers = new Map<string, PeerState>()
   private remoteStreams = new Map<string, MediaStream>()
   private unsubs: Unsubscribe[] = []
   private callbacks: MeshCallbacks = {}
@@ -52,9 +64,21 @@ export class MeshVoiceService {
   private audioCtx: AudioContext | null = null
   private speakTimer: number | null = null
   private connected = false
+  private audioUnlocked = false
 
   configure(callbacks: MeshCallbacks) {
     this.callbacks = callbacks
+  }
+
+  /** Call after a user click so browsers allow remote audio playback. */
+  async unlockAudio() {
+    this.audioUnlocked = true
+    if (this.audioCtx?.state === 'suspended') {
+      await this.audioCtx.resume().catch(() => undefined)
+    }
+    document.querySelectorAll<HTMLAudioElement>('[data-mesh-audio]').forEach((el) => {
+      void el.play().catch(() => undefined)
+    })
   }
 
   async connect(input: {
@@ -70,34 +94,23 @@ export class MeshVoiceService {
     this.callbacks.onConnection?.('connecting')
 
     try {
-      // Prefer audio+video; fall back to audio-only if camera fails
-      try {
-        this.localStream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-          video: input.enableCam
-            ? { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' }
-            : false,
-        })
-      } catch {
-        this.localStream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-          video: false,
-        })
-      }
+      this.localStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+        video: false,
+      })
 
-      // If video was requested but not granted, try adding camera separately
-      if (input.enableCam && !this.localStream.getVideoTracks().length) {
+      if (input.enableCam) {
         try {
           const cam = await navigator.mediaDevices.getUserMedia({
-            video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+            video: {
+              width: { ideal: 640 },
+              height: { ideal: 480 },
+              facingMode: 'user',
+            },
           })
           cam.getVideoTracks().forEach((t) => this.localStream!.addTrack(t))
         } catch {
@@ -115,6 +128,7 @@ export class MeshVoiceService {
       this.callbacks.onLocalStream?.(this.localStream)
       this.startLocalSpeakDetect()
 
+      // Presence
       await setDoc(doc(getDb(), 'rooms', this.roomId, 'voicePeers', this.uid), {
         uid: this.uid,
         name: input.name,
@@ -135,8 +149,10 @@ export class MeshVoiceService {
 
             for (const otherId of others) {
               if (this.peers.has(otherId)) continue
-              if (this.uid < otherId) void this.createOffer(otherId)
-              else this.ensurePeer(otherId)
+              // Polite peer = higher uid; impolite (lower uid) starts offers
+              const polite = this.uid > otherId
+              this.ensurePeer(otherId, polite)
+              if (!polite) void this.makeOffer(otherId)
             }
 
             this.callbacks.onPeerCount?.(others.length)
@@ -154,7 +170,7 @@ export class MeshVoiceService {
             snap.docChanges().forEach((change) => {
               if (change.type !== 'added') return
               const data = change.doc.data() as SignalDoc
-              if (data.to !== this.uid) return
+              if (data.to !== this.uid || data.from === this.uid) return
               void this.handleSignal(data, change.doc.id)
             })
           },
@@ -173,12 +189,19 @@ export class MeshVoiceService {
     return collection(getDb(), 'rooms', this.roomId, 'voiceSignals')
   }
 
-  private ensurePeer(remoteId: string): RTCPeerConnection {
+  private ensurePeer(remoteId: string, polite: boolean): PeerState {
     const existing = this.peers.get(remoteId)
     if (existing) return existing
 
     const pc = new RTCPeerConnection(ICE_SERVERS)
-    this.peers.set(remoteId, pc)
+    const state: PeerState = {
+      pc,
+      makingOffer: false,
+      ignoreOffer: false,
+      polite,
+      pendingIce: [],
+    }
+    this.peers.set(remoteId, state)
 
     this.localStream?.getTracks().forEach((track) => {
       pc.addTrack(track, this.localStream!)
@@ -201,70 +224,116 @@ export class MeshVoiceService {
         stream = new MediaStream()
         this.remoteStreams.set(remoteId, stream)
       }
-      ev.streams[0]?.getTracks().forEach((track) => {
-        const already = stream!.getTracks().some((t) => t.id === track.id)
-        if (!already) stream!.addTrack(track)
-      })
-      // Also handle track without streams array
-      if (ev.track && !stream.getTracks().some((t) => t.id === ev.track.id)) {
-        stream.addTrack(ev.track)
-      }
-      this.callbacks.onRemoteStream?.(remoteId, stream)
 
-      // Ensure audio plays
-      const audioTracks = stream.getAudioTracks()
-      if (audioTracks.length) {
-        let audio = document.getElementById(
-          `mesh-audio-${remoteId}`,
-        ) as HTMLAudioElement | null
-        if (!audio) {
-          audio = document.createElement('audio')
-          audio.id = `mesh-audio-${remoteId}`
-          audio.autoplay = true
-          audio.setAttribute('playsinline', 'true')
-          audio.style.display = 'none'
-          document.body.appendChild(audio)
-        }
-        audio.srcObject = stream
-        void audio.play().catch(() => undefined)
+      const track = ev.track
+      if (!stream.getTracks().some((t) => t.id === track.id)) {
+        stream.addTrack(track)
+      }
+
+      track.onunmute = () => {
+        this.callbacks.onRemoteStream?.(remoteId, stream!)
+        this.playRemoteAudio(remoteId, stream!)
+      }
+
+      this.callbacks.onRemoteStream?.(remoteId, stream)
+      this.playRemoteAudio(remoteId, stream)
+    }
+
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed') {
+        // Restart ICE
+        void pc.restartIce()
+        if (!state.polite) void this.makeOffer(remoteId)
       }
     }
 
-    return pc
+    return state
   }
 
-  private async createOffer(remoteId: string) {
-    if (this.makingOffer.has(remoteId)) return
-    this.makingOffer.add(remoteId)
+  private playRemoteAudio(remoteId: string, stream: MediaStream) {
+    const audioTracks = stream.getAudioTracks()
+    if (!audioTracks.length) return
+
+    let audio = document.getElementById(
+      `mesh-audio-${remoteId}`,
+    ) as HTMLAudioElement | null
+
+    if (!audio) {
+      audio = document.createElement('audio')
+      audio.id = `mesh-audio-${remoteId}`
+      audio.dataset.meshAudio = '1'
+      audio.autoplay = true
+      audio.setAttribute('playsinline', 'true')
+      // Keep in DOM but not visible; volume full
+      audio.style.position = 'fixed'
+      audio.style.width = '0'
+      audio.style.height = '0'
+      audio.style.opacity = '0'
+      audio.style.pointerEvents = 'none'
+      document.body.appendChild(audio)
+    }
+
+    if (audio.srcObject !== stream) {
+      audio.srcObject = stream
+    }
+    audio.muted = false
+    audio.volume = 1
+
+    const tryPlay = () => {
+      void audio!.play().catch(() => {
+        // Will retry on unlockAudio()
+      })
+    }
+    tryPlay()
+    if (this.audioUnlocked) tryPlay()
+  }
+
+  private async makeOffer(remoteId: string) {
+    const state = this.peers.get(remoteId)
+    if (!state || state.makingOffer) return
+    const { pc } = state
+
     try {
-      const pc = this.ensurePeer(remoteId)
+      state.makingOffer = true
       const offer = await pc.createOffer()
+      if (pc.signalingState !== 'stable') return
       await pc.setLocalDescription(offer)
       await addDoc(this.signalsCol(), {
         from: this.uid,
         to: remoteId,
         type: 'offer',
-        sdp: offer.sdp ?? '',
+        sdp: pc.localDescription?.sdp ?? '',
         at: serverTimestamp(),
       } satisfies SignalDoc)
+    } catch {
+      // ignore transient negotiation errors
     } finally {
-      this.makingOffer.delete(remoteId)
+      state.makingOffer = false
     }
   }
 
   private async handleSignal(signal: SignalDoc, docId: string) {
-    try {
-      const pc = this.ensurePeer(signal.from)
+    const polite = this.uid > signal.from
+    const state = this.ensurePeer(signal.from, polite)
+    const { pc } = state
 
+    try {
       if (signal.type === 'offer' && signal.sdp) {
+        const offerCollision =
+          state.makingOffer || pc.signalingState !== 'stable'
+        state.ignoreOffer = !state.polite && offerCollision
+        if (state.ignoreOffer) return
+
         await pc.setRemoteDescription({ type: 'offer', sdp: signal.sdp })
+        await this.flushIce(signal.from)
+
         const answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
         await addDoc(this.signalsCol(), {
           from: this.uid,
           to: signal.from,
           type: 'answer',
-          sdp: answer.sdp ?? '',
+          sdp: pc.localDescription?.sdp ?? '',
           at: serverTimestamp(),
         } satisfies SignalDoc)
       }
@@ -272,28 +341,49 @@ export class MeshVoiceService {
       if (signal.type === 'answer' && signal.sdp) {
         if (pc.signalingState === 'have-local-offer') {
           await pc.setRemoteDescription({ type: 'answer', sdp: signal.sdp })
+          await this.flushIce(signal.from)
         }
       }
 
       if (signal.type === 'ice' && signal.candidate) {
-        try {
-          await pc.addIceCandidate(JSON.parse(signal.candidate))
-        } catch {
-          // ignore
+        const init = JSON.parse(signal.candidate) as RTCIceCandidateInit
+        if (pc.remoteDescription) {
+          try {
+            await pc.addIceCandidate(init)
+          } catch {
+            // ignore
+          }
+        } else {
+          state.pendingIce.push(init)
         }
       }
+    } catch {
+      // ignore bad signals
     } finally {
       void deleteDoc(doc(getDb(), 'rooms', this.roomId, 'voiceSignals', docId))
     }
   }
 
+  private async flushIce(remoteId: string) {
+    const state = this.peers.get(remoteId)
+    if (!state?.pc.remoteDescription) return
+    const pending = state.pendingIce.splice(0)
+    for (const init of pending) {
+      try {
+        await state.pc.addIceCandidate(init)
+      } catch {
+        // ignore
+      }
+    }
+  }
+
   private closePeer(remoteId: string) {
-    this.peers.get(remoteId)?.close()
+    const state = this.peers.get(remoteId)
+    state?.pc.close()
     this.peers.delete(remoteId)
     this.remoteStreams.delete(remoteId)
     this.callbacks.onRemoteStream?.(remoteId, null)
-    const audio = document.getElementById(`mesh-audio-${remoteId}`)
-    audio?.remove()
+    document.getElementById(`mesh-audio-${remoteId}`)?.remove()
   }
 
   private startLocalSpeakDetect() {
@@ -309,8 +399,9 @@ export class MeshVoiceService {
       if (!this.analyser) return
       this.analyser.getByteFrequencyData(data)
       const avg = data.reduce((a, b) => a + b, 0) / data.length
-      const live = this.localStream?.getAudioTracks().some((t) => t.enabled) ?? false
-      this.callbacks.onSpeaking?.(this.uid, live && avg > 18)
+      const live =
+        this.localStream?.getAudioTracks().some((t) => t.enabled) ?? false
+      this.callbacks.onSpeaking?.(this.uid, live && avg > 12)
       this.speakTimer = window.setTimeout(tick, 120)
     }
     tick()
@@ -327,15 +418,18 @@ export class MeshVoiceService {
     if (!hasVideo && enabled) {
       try {
         const cam = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+          video: {
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            facingMode: 'user',
+          },
         })
         const track = cam.getVideoTracks()[0]
         if (track && this.localStream) {
           this.localStream.addTrack(track)
-          // Add to existing peer connections and renegotiate
-          for (const [remoteId, pc] of this.peers) {
-            pc.addTrack(track, this.localStream)
-            if (this.uid < remoteId) void this.createOffer(remoteId)
+          for (const [remoteId, state] of this.peers) {
+            state.pc.addTrack(track, this.localStream)
+            if (!state.polite) void this.makeOffer(remoteId)
           }
           this.callbacks.onLocalStream?.(this.localStream)
         }
@@ -350,14 +444,6 @@ export class MeshVoiceService {
       t.enabled = enabled
     })
     this.callbacks.onLocalStream?.(this.localStream)
-  }
-
-  getLocalStream() {
-    return this.localStream
-  }
-
-  getRemoteStreams() {
-    return new Map(this.remoteStreams)
   }
 
   async disconnect() {

@@ -3,6 +3,8 @@
 import { Room, RoomEvent } from 'livekit-client'
 import { MeshVoice } from './MeshVoice'
 
+export { MeshVoice }
+
 export type VoiceConnectionState =
   | 'idle'
   | 'connecting'
@@ -167,6 +169,10 @@ export class VoiceRoomService {
 
   getMode() {
     return this.mode
+  }
+
+  async unlockAudio() {
+    await MeshVoice.unlockAudio()
   }
 
   async disconnect() {
