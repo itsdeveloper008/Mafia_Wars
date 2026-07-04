@@ -1,0 +1,3246 @@
+# MAFIA WARS — Complete Project Overview for AI Tools
+
+> **Purpose of this file:** Give any AI assistant full context about the Mafia Wars website — what it is, how it works, what is built, what is missing, and all source code. Use this to generate prompts, plan features, fix bugs, or extend the game.
+
+---
+
+## 1. PROJECT SUMMARY
+
+**Name:** Mafia Wars  
+**Type:** Browser-based party game (Mafia / Werewolf-style social deduction)  
+**Tagline:** "Fast party nights. Secret roles. Perfect shuffle."  
+**Stack:** React 19 + TypeScript + Vite 7 (single-page app, no backend)  
+**Architecture:** Everything lives in one main component (`src/App.tsx` ~1350 lines). No routing library. No database. State is React `useState` only.  
+**Deployment model:** Static frontend. Online "rooms" are share-link placeholders — there is no real multiplayer server yet.
+
+### What the app does
+1. Shows a cinematic landing screen (auto-advances after 5 seconds)
+2. Lets players choose **Offline** (tabletop host) or **Online** (share a room link)
+3. Lobby: add players by name + emoji avatar, toggle optional roles, configure game settings
+4. Shuffles and assigns secret roles as flip cards
+5. Runs structured **Night** and **Day** phases with voting, abilities, and event logs
+6. Detects win conditions and shows a post-game summary
+7. Saves last 20 game results to `localStorage`
+
+---
+
+## 2. TECH STACK & COMMANDS
+
+| Item | Detail |
+|------|--------|
+| Framework | React 19.2 |
+| Language | TypeScript 5.9 (strict mode) |
+| Bundler | Vite 7.3 |
+| Styling | Plain CSS (`App.css` + `index.css`), no Tailwind |
+| State | React hooks only (no Redux/Zustand) |
+| Routing | None — manual `mode` state switches screens |
+| Backend | None |
+| Real-time | None (online mode is UI-only share link) |
+
+```bash
+npm install      # install dependencies
+npm run dev      # start dev server (Vite)
+npm run build    # production build to dist/
+npm run preview  # preview production build
+npm run lint     # ESLint
+```
+
+---
+
+## 3. FILE STRUCTURE
+
+```
+Mafia Wars/
+├── src/
+│   ├── App.tsx              # MAIN FILE — all game logic + all UI (~1350 lines)
+│   ├── App.css              # All component styles (~1240 lines)
+│   ├── main.tsx             # React entry point
+│   ├── index.css            # Global reset + base styles
+│   ├── assets/react.svg     # Unused Vite default
+│   ├── Landing page Img..png
+│   ├── God Father.png
+│   ├── Mafia's.png
+│   ├── Grand Mother.png
+│   ├── Doctor.png
+│   ├── Civilians.png
+│   ├── Mafia Wars Game Favicon..png
+│   ├── Back side of the Card.png   # ⚠️ IMPORTED BUT MISSING
+│   └── Detective.png               # ⚠️ IMPORTED BUT MISSING
+├── public/vite.svg
+├── package.json
+├── vite.config.ts
+├── tsconfig.json / tsconfig.app.json / tsconfig.node.json
+├── eslint.config.js
+├── .vscode/settings.json
+├── Mafia code                 # Older code dump (outdated)
+└── All codes                  # THIS FILE — current full overview
+```
+
+**Missing files that break build:**
+- `index.html` — was in older dump but not in project root now (Vite needs it)
+- `src/Back side of the Card.png` — card back image
+- `src/Detective.png` — mode-select role icon
+
+---
+
+## 4. SCREEN FLOW (App Modes)
+
+The app uses a `mode` state variable to switch between 5 screens:
+
+```
+landing (5s auto) → mode-select → lobby → game → summary
+                                      ↑         │
+                                      └─────────┘ (play again / new game)
+```
+
+| Mode | Screen | Description |
+|------|--------|-------------|
+| `landing` | Splash | Full-screen hero image, smoke animations, progress bar. Auto-goes to mode-select after 5s |
+| `mode-select` | Choose play type | Offline vs Online cards. Shows animated role icons. Player rules box |
+| `lobby` | Setup | Add/remove players, room options, role toggles, game settings, theme toggle |
+| `game` | Active play | Flip cards, night sequence, day voting, abilities, event log |
+| `summary` | End screen | Reveals all roles, event history, localStorage history, play again |
+
+---
+
+## 5. DATA MODELS (TypeScript)
+
+### Core Types
+```typescript
+type Mode = 'landing' | 'mode-select' | 'lobby' | 'game' | 'summary'
+type PlayType = 'online' | 'offline'
+type Phase = 'night' | 'day'
+type NightStep = 'intro' | 'mafia' | 'serial' | 'doctor' | 'detective' | 'results'
+type Theme = 'dark' | 'light'
+
+type Role =
+  | 'Mafia' | 'Civilian' | 'Godfather' | 'Grandmother'
+  | 'Doctor' | 'Detective' | 'Sniper' | 'Spy'
+  | 'Mayor' | 'Serial Killer'
+```
+
+### Player
+```typescript
+interface Player {
+  id: string
+  name: string
+  role?: Role
+  alive: boolean
+  avatar: string          // emoji
+  lastWill: string
+  sniperUsed?: boolean
+  notes?: string[]
+}
+```
+
+### Game Settings
+```typescript
+interface GameSettings {
+  defenseTimerSec: number    // default 30
+  allowSpy: boolean
+  allowMayor: boolean
+  allowSniper: boolean
+  allowSerialKiller: boolean
+}
+```
+
+### Room Config
+```typescript
+interface RoomConfig {
+  roomName: string
+  password: string
+  type: PlayType
+  includeGodfather: boolean
+  includeGrandmother: boolean
+}
+```
+
+---
+
+## 6. ROLES & RULES
+
+| Role | Team | Ability | Min players to include |
+|------|------|---------|------------------------|
+| Mafia | Mafia | Kill one player each night | Always (1–2 based on count) |
+| Godfather | Mafia | Immune to Detective; leads Mafia | 6+ (optional toggle) |
+| Grandmother | Civilian | If killed, takes one random Mafia with her | 6+ (optional toggle) |
+| Civilian | Civilian | Vote out Mafia during day | Fills remaining slots |
+| Doctor | Civilian | Save one player from death each night; cannot save same person twice in a row | 4+ |
+| Detective | Civilian | Investigate one player; gets private "suspicious/not suspicious" result | 5+ |
+| Spy | Civilian | Appears suspicious to Detective; wins with civilians; Mafia doesn't know them | 6+ (settings toggle) |
+| Mayor | Civilian | Vote counts double; revealed when killed | 5+ (settings toggle) |
+| Sniper | Civilian | One shot per game; dies if shoots innocent | 6+ (settings toggle) |
+| Serial Killer | Neutral | Kills one each night; wins if last one standing | 7+ (settings toggle) |
+
+### Mafia count by player count
+- 4 players: 1 Mafia
+- 5+ players: 2 Mafia
+
+### Minimum players to start: **4**
+
+### Win conditions
+- **Civilians win:** All Mafia (Mafia + Godfather) eliminated
+- **Mafia win:** Mafia count ≥ non-Mafia alive count
+- **Serial Killer wins:** Only Serial Killer left alive
+
+### Detective investigation rules
+- Mafia, Spy, Serial Killer → "suspicious"
+- Godfather → always "not suspicious" (immune)
+- Everyone else → "not suspicious"
+
+---
+
+## 7. GAME FLOW (Night & Day)
+
+### Night sequence (ordered steps)
+1. **intro** — "Everyone close your eyes"
+2. **mafia** — Mafia picks kill target (host selects on screen)
+3. **serial** — Serial Killer picks target (if in game)
+4. **doctor** — Doctor picks save target (cooldown: can't save same as last night)
+5. **detective** — Detective picks investigate target
+6. **results** — Resolve all actions → switch to day
+
+**Keyboard shortcut:** Spacebar advances night steps during game.
+
+### Night resolution logic
+- Mafia kill blocked if Doctor saved that target
+- Serial Killer kill also blockable by Doctor
+- Detective gets private event log entry (only visible in Detective Notes panel)
+- Mayor reveal + Spy reveal + Last Will announced on death
+
+### Day sequence
+1. **Nomination** — Tap players to nominate; live tally shown
+2. **Defense** — Top nominee gets defense timer (configurable, default 30s)
+3. **Final vote** — Each alive player votes Yes/No; Mayor vote = 2x weight
+4. **Finalize** — Majority Yes eliminates player; else "failed to reach majority"
+5. Round increments → back to Night
+
+### Phase transitions
+- Animated overlay: "Sunrise..." (night→day) or "Night falls..." (day→night)
+
+---
+
+## 8. KEY FEATURES IMPLEMENTED
+
+| Feature | Status |
+|---------|--------|
+| Landing splash with animations | ✅ Done |
+| Offline / Online mode select | ✅ UI done |
+| Player lobby with avatars | ✅ Done |
+| Role shuffle & flip cards | ✅ Done |
+| Godfather / Grandmother toggles | ✅ Done |
+| Optional Spy, Mayor, Sniper, Serial Killer | ✅ Done |
+| Structured night phase | ✅ Done |
+| Day nomination + defense + voting | ✅ Done |
+| Mayor double vote | ✅ Done |
+| Sniper one-shot ability | ✅ Done |
+| Doctor save cooldown | ✅ Done |
+| Detective private notes | ✅ Done |
+| Last Will per player | ✅ Done |
+| Game event log | ✅ Done |
+| Win detection overlay | ✅ Done |
+| Post-game summary | ✅ Done |
+| localStorage game history (20 games) | ✅ Done |
+| Dark / Light theme toggle | ✅ Done |
+| Sound effects (Web Audio API tones) | ✅ Done |
+| Share room link (clipboard / Web Share API) | ✅ UI only |
+| Real multiplayer / WebSocket sync | ❌ Not built |
+| Join room from URL params | ❌ Not built |
+| Player accounts / auth | ❌ Not built |
+| Mobile-optimized touch UX | ⚠️ Partial (responsive CSS exists) |
+
+---
+
+## 9. STATE VARIABLES (App.tsx)
+
+All state is in the `App()` component:
+
+| State | Purpose |
+|-------|---------|
+| `mode` | Current screen |
+| `playType` | 'online' or 'offline' |
+| `roomConfig` | Room name, password, role toggles |
+| `isHost` | Host flag (always true currently) |
+| `players` | Array of Player objects |
+| `pendingName` / `pendingAvatar` | Lobby input |
+| `flippedCards` | Which role cards are face-up |
+| `phase` | 'night' or 'day' |
+| `nightStep` | Current step in night sequence |
+| `roundNumber` | Current round |
+| `winner` | 'mafia' / 'civilians' / 'serial' / null |
+| `theme` | 'dark' or 'light' |
+| `events` | Game event log array |
+| `nightChoices` | Mafia/serial/doctor/detective targets this night |
+| `doctorLastSavedId` | Doctor cooldown tracking |
+| `nominations` | Day nomination tallies |
+| `defenseCandidateId` | Player on defense |
+| `defenseTimeLeft` | Defense countdown |
+| `finalVotes` | Yes/No votes per player |
+| `settings` | GameSettings object |
+| `history` | localStorage game history |
+| `showHowToPlay` / `showSettings` | Modal toggles |
+| `phaseTransitionText` | Sunrise/Night falls overlay |
+| `generatedShareCode` | Room share code |
+
+---
+
+## 10. KEY FUNCTIONS
+
+| Function | Purpose |
+|----------|---------|
+| `shuffle()` | Fisher-Yates random shuffle for roles |
+| `generateRoomCode()` | Random 5-char room code |
+| `addPlayer()` / `removePlayer()` | Lobby management |
+| `startGame()` | Build role deck, assign roles, enter game mode |
+| `evaluateWinConditions()` | Check mafia/civilian/serial win |
+| `markKilled()` | Kill player, trigger Grandma revenge, Mayor/Spy reveal, last will |
+| `resolveNight()` | Apply all night actions |
+| `handleNightNext()` | Advance night step sequence |
+| `nominatePlayer()` / `beginDefense()` / `castFinalVote()` / `finalizeDayVote()` | Day voting flow |
+| `sniperAction()` | Sniper shot with innocent penalty |
+| `playTone()` | Web Audio beeps for night/kill/vote |
+| `pushEvent()` | Add to game event log |
+| `saveHistorySnapshot()` | Save to localStorage on win |
+| `renderLanding/ModeSelect/Lobby/Game/Summary()` | UI render functions |
+
+---
+
+## 11. DESIGN & STYLING
+
+### Visual theme
+- **Dark mode (default):** Deep navy/black gradients, orange-red accents (`#f97316`, `#b91c1c`)
+- **Light mode:** Light gray/white backgrounds via `body[data-theme='light']`
+- **Typography:** System UI fonts, uppercase letter-spacing on headings
+- **Cards:** 3D flip animation (`perspective` + `rotateY`)
+- **Buttons:** Pill-shaped, gradient primary, outline secondary
+- **Panels:** Glassmorphism (`backdrop-filter: blur`, semi-transparent backgrounds)
+
+### Color accents by role (mode-select icons)
+- Godfather: Orange `#f97316`
+- Mafia: Dark red `#991b1b`
+- Grandmother: Rose `#e11d48`
+- Doctor: (image)
+- Detective: (image)
+- Civilians: Green `#22c55e`
+
+### Responsive breakpoints
+- `900px` — hero card stacks
+- `640px` — panels shrink, mode cards stack vertically
+
+### Image assets used
+| File | Used in |
+|------|---------|
+| Landing page Img..png | Landing + mode-select background |
+| God Father.png | Mode-select role row |
+| Mafia's.png | Mode-select role row |
+| Grand Mother.png | Mode-select role row |
+| Doctor.png | Mode-select role row |
+| Detective.png | Mode-select role row (MISSING) |
+| Civilians.png | Mode-select role row |
+| Back side of the Card.png | Card backs in game (MISSING) |
+| Mafia Wars Game Favicon..png | Favicon (needs index.html) |
+
+---
+
+## 12. WHAT IS NOT BUILT YET (Gaps for AI to know)
+
+1. **No real online multiplayer** — "Online" mode only generates a share URL; other players cannot actually join or sync state
+2. **No URL param handling** — `?room=...&code=...` in share link is not read on load
+3. **No backend** — No API, database, or WebSocket server
+4. **Host-only UX** — One device runs everything; players pass phone to see their card
+5. **Missing image files** — Card back and Detective PNGs will cause build errors
+6. **Missing index.html** — Vite entry HTML may need to be recreated
+7. **No tests** — Zero unit or E2E tests
+8. **Sniper uses `prompt()`** — Crude UX for target selection
+9. **No role-specific player views** — Everyone sees the host screen
+
+---
+
+## 13. SUGGESTED AI PROMPTS (Examples)
+
+Use these with this file as context:
+
+**Fix build:**
+> "Mafia Wars is missing index.html, Back side of the Card.png, and Detective.png. Recreate index.html and tell me what images I need to add."
+
+**Add real multiplayer:**
+> "Add WebSocket multiplayer to Mafia Wars so online room share links actually let players join. Use [Socket.io / Partykit / Supabase Realtime]. Keep the existing host flow."
+
+**Improve mobile UX:**
+> "Redesign the game screen for mobile — each player should only see their own role card, not the full host panel."
+
+**Add new role:**
+> "Add a 'Bodyguard' role to Mafia Wars that can take a hit for someone once per game. Update role assignment, night sequence, and summary screen."
+
+**Polish landing page:**
+> "Improve the Mafia Wars landing page with a manual 'Enter' button instead of only auto-advance, and add subtle sound on load."
+
+**Refactor:**
+> "Split App.tsx into separate components: Landing, Lobby, Game, Summary, and a useGameState hook. Keep all behavior identical."
+
+---
+
+## 14. DEPENDENCIES (package.json)
+
+```json
+{
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^16.5.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.48.0",
+    "vite": "^7.3.1"
+  }
+}
+```
+
+---
+
+## 15. FULL SOURCE CODE
+
+Below is every source file in the project (excluding node_modules, package-lock.json, and binary images).
+
+### RECOMMENDED index.html (currently missing from project)
+```html
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link
+      rel="icon"
+      type="image/png"
+      href="/src/Mafia Wars Game Favicon..png"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mafia Wars</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>```
+
+### File: `src/App.tsx`
+```tsx
+import { useEffect, useMemo, useRef, useState } from 'react'
+import './App.css'
+import cardBackImage from './Back side of the Card.png'
+import landingPageImage from './Landing page Img..png'
+import godfatherImage from './God Father.png'
+import mafiaImage from './Mafia\'s.png'
+import grandmotherImage from './Grand Mother.png'
+import doctorImage from './Doctor.png'
+import detectiveImage from './Detective.png'
+import civiliansImage from './Civilians.png'
+
+type Mode = 'landing' | 'mode-select' | 'lobby' | 'game' | 'summary'
+type PlayType = 'online' | 'offline'
+
+type Role =
+  | 'Mafia'
+  | 'Civilian'
+  | 'Godfather'
+  | 'Grandmother'
+  | 'Doctor'
+  | 'Detective'
+  | 'Sniper'
+  | 'Spy'
+  | 'Mayor'
+  | 'Serial Killer'
+
+interface Player {
+  id: string
+  name: string
+  role?: Role
+  alive: boolean
+  avatar: string
+  lastWill: string
+  sniperUsed?: boolean
+  notes?: string[]
+}
+
+interface RoomConfig {
+  roomName: string
+  password: string
+  type: PlayType
+  includeGodfather: boolean
+  includeGrandmother: boolean
+}
+
+type Theme = 'dark' | 'light'
+type Phase = 'night' | 'day'
+type NightStep = 'intro' | 'mafia' | 'serial' | 'doctor' | 'detective' | 'results'
+
+interface GameSettings {
+  defenseTimerSec: number
+  allowSpy: boolean
+  allowMayor: boolean
+  allowSniper: boolean
+  allowSerialKiller: boolean
+}
+
+interface GameEvent {
+  id: string
+  round: number
+  phase: Phase
+  message: string
+  privateTo?: string
+}
+
+function shuffle<T>(array: T[]): T[] {
+  const copy = [...array]
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[copy[i], copy[j]] = [copy[j], copy[i]]
+  }
+  return copy
+}
+
+function generateRoomCode() {
+  return Math.random().toString(36).slice(2, 7).toUpperCase()
+}
+
+function App() {
+  const [mode, setMode] = useState<Mode>('landing')
+  const [playType, setPlayType] = useState<PlayType | null>(null)
+  const [roomConfig, setRoomConfig] = useState<RoomConfig>({
+    roomName: '',
+    password: '',
+    type: 'online',
+    includeGodfather: false,
+    includeGrandmother: false,
+  })
+  const [isHost, setIsHost] = useState<boolean>(true)
+  const [players, setPlayers] = useState<Player[]>([])
+  const [pendingName, setPendingName] = useState('')
+  const [pendingAvatar, setPendingAvatar] = useState('🕵️')
+  const [autoAdvanceDone, setAutoAdvanceDone] = useState(false)
+  const [generatedShareCode, setGeneratedShareCode] = useState<string>('')
+  const [flippedCards, setFlippedCards] = useState<Record<string, boolean>>({})
+  const [phase, setPhase] = useState<Phase>('night')
+  const [nightStep, setNightStep] = useState<NightStep>('intro')
+  const [roundNumber, setRoundNumber] = useState(1)
+  const [winner, setWinner] = useState<'mafia' | 'civilians' | 'serial' | null>(null)
+  const [theme, setTheme] = useState<Theme>('dark')
+  const [events, setEvents] = useState<GameEvent[]>([])
+  const [showHowToPlay, setShowHowToPlay] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
+  const [history, setHistory] = useState<string[]>([])
+  const [phaseTransitionText, setPhaseTransitionText] = useState('')
+  const [nightChoices, setNightChoices] = useState<{
+    mafiaTargetId?: string
+    serialTargetId?: string
+    doctorSaveId?: string
+    detectiveTargetId?: string
+  }>({})
+  const [doctorLastSavedId, setDoctorLastSavedId] = useState<string | null>(null)
+  const [nominations, setNominations] = useState<Record<string, number>>({})
+  const [defenseCandidateId, setDefenseCandidateId] = useState<string | null>(null)
+  const [defenseTimeLeft, setDefenseTimeLeft] = useState(0)
+  const [finalVotes, setFinalVotes] = useState<Record<string, 'yes' | 'no'>>({})
+  const [settings, setSettings] = useState<GameSettings>({
+    defenseTimerSec: 30,
+    allowSpy: true,
+    allowMayor: true,
+    allowSniper: true,
+    allowSerialKiller: true,
+  })
+  const audioCtx = useRef<AudioContext | null>(null)
+
+  // Automatically move from landing screen to mode select after 5 seconds
+  useEffect(() => {
+    if (mode !== 'landing' || autoAdvanceDone) return
+    const timer = setTimeout(() => {
+      setMode('mode-select')
+      setAutoAdvanceDone(true)
+    }, 5000)
+    return () => clearTimeout(timer)
+  }, [mode, autoAdvanceDone])
+
+  // Derived flags for role-availability rules
+  const canUseSpecialFamily = useMemo(() => {
+    const count = players.length || 0
+    if (count < 3) return false
+    if (count < 6) return false
+    return true
+  }, [players.length])
+
+  const minPlayersSatisfied = players.length >= 4
+  const avatars = ['🕵️', '🧔', '👩', '👴', '👮', '🎩', '🧙', '🦹']
+
+  useEffect(() => {
+    document.body.dataset.theme = theme
+  }, [theme])
+
+  useEffect(() => {
+    const raw = localStorage.getItem('mafiaWars.history')
+    if (raw) {
+      try {
+        setHistory(JSON.parse(raw))
+      } catch {
+        // ignore invalid localStorage payload
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    if (defenseTimeLeft <= 0) return
+    const t = setTimeout(() => setDefenseTimeLeft((v) => v - 1), 1000)
+    return () => clearTimeout(t)
+  }, [defenseTimeLeft])
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.code === 'Space' && mode === 'game') {
+        e.preventDefault()
+        if (phase === 'night') handleNightNext()
+      }
+      if (e.key === 'Enter' && mode === 'lobby') {
+        addPlayer()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [mode, phase, nightStep, pendingName]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  function playTone(kind: 'night' | 'kill' | 'vote') {
+    if (!audioCtx.current) audioCtx.current = new AudioContext()
+    const ctx = audioCtx.current
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    const now = ctx.currentTime
+    if (kind === 'night') osc.frequency.value = 180
+    if (kind === 'kill') osc.frequency.value = 90
+    if (kind === 'vote') osc.frequency.value = 380
+    gain.gain.setValueAtTime(0.0001, now)
+    gain.gain.exponentialRampToValueAtTime(0.15, now + 0.01)
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.28)
+    osc.start(now)
+    osc.stop(now + 0.3)
+  }
+
+  function pushEvent(message: string, privateTo?: string) {
+    setEvents((prev) => [
+      ...prev,
+      {
+        id: `${Date.now()}-${Math.random()}`,
+        round: roundNumber,
+        phase,
+        message,
+        privateTo,
+      },
+    ])
+  }
+
+  function addPlayer() {
+    const name = pendingName.trim()
+    if (!name) return
+    setPlayers((prev) => [
+      ...prev,
+      {
+        id: `${Date.now()}-${Math.random()}`,
+        name,
+        alive: true,
+        avatar: pendingAvatar,
+        lastWill: '',
+      },
+    ])
+    setPendingName('')
+  }
+
+  function removePlayer(id: string) {
+    setPlayers((prev) => prev.filter((p) => p.id !== id))
+  }
+
+  function startGame() {
+    if (!minPlayersSatisfied) return
+    const count = players.length
+
+    // Determine number of mafias according to your rules
+    let mafiaCount = 1
+    if (count >= 5) {
+      mafiaCount = 2
+    }
+
+    // Build the deck of roles for the current players
+    const roles: Role[] = []
+
+    // Mafia family
+    // Ensure at least one plain Mafia even if we add Godfather
+    for (let i = 0; i < mafiaCount; i++) {
+      roles.push('Mafia')
+    }
+
+    if (roomConfig.includeGodfather && canUseSpecialFamily) {
+      roles.push('Godfather')
+    }
+    if (roomConfig.includeGrandmother && canUseSpecialFamily) {
+      roles.push('Grandmother')
+    }
+    if (settings.allowSpy && count >= 6) roles.push('Spy')
+    if (settings.allowMayor && count >= 5) roles.push('Mayor')
+    if (settings.allowSniper && count >= 6) roles.push('Sniper')
+    if (settings.allowSerialKiller && count >= 7) roles.push('Serial Killer')
+
+    // Add a Doctor and Detective if there is room
+    if (count >= 4) {
+      roles.push('Doctor')
+    }
+    if (count >= 5) {
+      roles.push('Detective')
+    }
+
+    // Fill remaining with Civilians
+    while (roles.length < count) {
+      roles.push('Civilian')
+    }
+
+    const shuffledRoles = shuffle(roles)
+    const withRoles = players.map((p, idx) => ({
+      ...p,
+      role: shuffledRoles[idx],
+      alive: true,
+      sniperUsed: false,
+      notes: [],
+    }))
+    setPlayers(withRoles)
+    setFlippedCards({})
+    setPhase('night')
+    setNightStep('intro')
+    setNightChoices({})
+    setRoundNumber(1)
+    setDoctorLastSavedId(null)
+    setNominations({})
+    setDefenseCandidateId(null)
+    setDefenseTimeLeft(0)
+    setFinalVotes({})
+    setEvents([])
+    setWinner(null)
+    setMode('game')
+    pushEvent('Game started.')
+  }
+
+  function endGame() {
+    setMode('summary')
+  }
+
+  function resetToLobby() {
+    setPlayers((prev) =>
+      prev.map((p) => ({
+        ...p,
+        role: undefined,
+        alive: true,
+        sniperUsed: false,
+        notes: [],
+      })),
+    )
+    setFlippedCards({})
+    setPhase('night')
+    setNightStep('intro')
+    setNightChoices({})
+    setRoundNumber(1)
+    setDoctorLastSavedId(null)
+    setNominations({})
+    setDefenseCandidateId(null)
+    setDefenseTimeLeft(0)
+    setFinalVotes({})
+    setEvents([])
+    setWinner(null)
+    setMode('lobby')
+  }
+
+  function handleSelectPlayType(type: PlayType) {
+    setPlayType(type)
+    setRoomConfig((prev) => ({ ...prev, type }))
+    setIsHost(true)
+    setMode('lobby')
+  }
+
+  function handleGenerateShare() {
+    const code = generatedShareCode || generateRoomCode()
+    setGeneratedShareCode(code)
+    const url = `${window.location.origin}?room=${encodeURIComponent(
+      roomConfig.roomName || code,
+    )}&code=${code}`
+    if (navigator.share) {
+      navigator
+        .share({
+          title: 'Join my Mafia Wars room',
+          text: `Room: ${roomConfig.roomName || code}\nCode: ${code}`,
+          url,
+        })
+        .catch(() => {
+          // ignore
+        })
+    } else {
+      navigator.clipboard.writeText(`Room: ${roomConfig.roomName || code}\nCode: ${code}\n${url}`)
+      alert('Share info copied to clipboard')
+    }
+  }
+
+  const roleDescriptions: Record<Role, string> = {
+    Mafia: 'Kill one civilian each night.',
+    Godfather: 'Immune to Detective. Leads the Mafia.',
+    Grandmother: 'If killed, takes one Mafia with her.',
+    Civilian: 'Find and vote out the Mafia.',
+    Doctor: 'Save one player from death each night.',
+    Detective: 'Investigate one player each night.',
+    Sniper:
+      'Civilian side. One shot per game. If they shoot an innocent, Sniper dies.',
+    Spy: 'Appears in mafia circle but wins with civilians. Mafia does not know Spy.',
+    Mayor: 'Vote counts double during day votes. Revealed to all when killed.',
+    'Serial Killer': 'Neutral role. Kills one each night. Wins if last standing.',
+  }
+
+  function toggleCardFlip(id: string) {
+    setFlippedCards((prev) => ({
+      ...prev,
+      [id]: !prev[id],
+    }))
+  }
+
+  function evaluateWinConditions(currentPlayers: Player[]) {
+    const aliveMafias = currentPlayers.filter(
+      (p) => p.alive && (p.role === 'Mafia' || p.role === 'Godfather'),
+    ).length
+    const aliveSerial = currentPlayers.filter(
+      (p) => p.alive && p.role === 'Serial Killer',
+    ).length
+    const aliveNonMafias = currentPlayers.filter(
+      (p) =>
+        p.alive &&
+        p.role !== 'Mafia' &&
+        p.role !== 'Godfather',
+    ).length
+    const aliveTotal = currentPlayers.filter((p) => p.alive).length
+
+    if (aliveSerial === 1 && aliveTotal === 1) {
+      setWinner('serial')
+      return
+    }
+
+    if (aliveMafias === 0) {
+      setWinner('civilians')
+      return
+    }
+
+    if (aliveMafias >= aliveNonMafias) {
+      setWinner('mafia')
+    }
+  }
+
+  function markKilled(
+    id: string,
+    reason = 'eliminated',
+    ignoreGrandmother = false,
+    workingSet?: Player[],
+  ): Player[] {
+    const source = workingSet ?? players
+    let updated = source.map((p) =>
+      p.id === id ? { ...p, alive: false } : p,
+    )
+    const victim = source.find((p) => p.id === id)
+    if (victim?.role === 'Mayor') {
+      pushEvent(`The Mayor (${victim.name}) has been revealed!`)
+    }
+    if (victim?.role === 'Spy') {
+      pushEvent(`Double-agent reveal: ${victim.name} was the Spy!`)
+    }
+    if (victim?.lastWill?.trim()) {
+      pushEvent(`${victim.name}'s Last Will: "${victim.lastWill.trim()}"`)
+    }
+    if (!ignoreGrandmother && victim?.role === 'Grandmother') {
+      const aliveMafias = updated.filter(
+        (p) => p.alive && (p.role === 'Mafia' || p.role === 'Godfather'),
+      )
+      if (aliveMafias.length > 0) {
+        const chosen = aliveMafias[Math.floor(Math.random() * aliveMafias.length)]
+        updated = updated.map((p) =>
+          p.id === chosen.id ? { ...p, alive: false } : p,
+        )
+        pushEvent(`${chosen.name} was taken down by the Grandmother!`)
+      }
+    }
+    pushEvent(`${victim?.name ?? 'A player'} was ${reason}.`)
+    evaluateWinConditions(updated)
+    return updated
+  }
+
+  function resolveNight() {
+    const mafiaTarget = nightChoices.mafiaTargetId
+    const doctorSave = nightChoices.doctorSaveId
+    const serialTarget = nightChoices.serialTargetId
+    const detectiveTarget = nightChoices.detectiveTargetId
+    let working = [...players]
+    const notes: string[] = []
+    if (mafiaTarget) {
+      if (doctorSave && doctorSave === mafiaTarget) {
+        notes.push('Someone was attacked last night... but survived!')
+        pushEvent('Doctor saved the target.')
+      } else {
+        const targetName = players.find((p) => p.id === mafiaTarget)?.name ?? 'Unknown'
+        notes.push(`A body was found... ${targetName} was killed.`)
+        working = markKilled(mafiaTarget, 'killed by the Mafia', false, working)
+      }
+    }
+    if (serialTarget) {
+      if (doctorSave && doctorSave === serialTarget) {
+        notes.push('A second attack was attempted... but the target survived!')
+      } else if (working.find((p) => p.id === serialTarget)?.alive) {
+        const targetName = players.find((p) => p.id === serialTarget)?.name ?? 'Unknown'
+        notes.push(`${targetName} was murdered by an unknown killer.`)
+        working = markKilled(serialTarget, 'killed by the Serial Killer', false, working)
+      }
+    }
+    if (detectiveTarget) {
+      const target = players.find((p) => p.id === detectiveTarget)
+      if (target) {
+        const suspicious =
+          target.role === 'Mafia' || target.role === 'Spy' || target.role === 'Serial Killer'
+        const result = target.role === 'Godfather' ? 'not suspicious' : suspicious ? 'suspicious' : 'not suspicious'
+        const detective = players.find((p) => p.role === 'Detective')
+        if (detective) {
+          pushEvent(`Investigation: ${target.name} is ${result}.`, detective.id)
+        }
+      }
+    }
+    if (notes.length === 0) notes.push('The night was eerily quiet...')
+    pushEvent(notes.join(' '))
+    setPlayers(working)
+    setDoctorLastSavedId(doctorSave ?? null)
+    setNightChoices({})
+    setPhaseTransitionText('Sunrise...')
+    setTimeout(() => setPhaseTransitionText(''), 850)
+    setPhase('day')
+    setNightStep('intro')
+    setNominations({})
+    setDefenseCandidateId(null)
+    setDefenseTimeLeft(0)
+    setFinalVotes({})
+  }
+
+  function handleNightNext() {
+    const order: NightStep[] = ['intro', 'mafia', 'serial', 'doctor', 'detective', 'results']
+    const index = order.indexOf(nightStep)
+    if (index === order.length - 1) {
+      resolveNight()
+      playTone('night')
+      return
+    }
+    setNightStep(order[index + 1])
+  }
+
+  function nominatePlayer(id: string) {
+    if (phase !== 'day' || defenseCandidateId) return
+    setNominations((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }))
+  }
+
+  function beginDefense() {
+    const top = Object.entries(nominations).sort((a, b) => b[1] - a[1])[0]
+    if (!top) return
+    setDefenseCandidateId(top[0])
+    setDefenseTimeLeft(settings.defenseTimerSec)
+    setFinalVotes({})
+  }
+
+  function castFinalVote(playerId: string, vote: 'yes' | 'no') {
+    setFinalVotes((prev) => ({ ...prev, [playerId]: vote }))
+    playTone('vote')
+  }
+
+  function finalizeDayVote() {
+    if (!defenseCandidateId) return
+    let yes = 0
+    let no = 0
+    players
+      .filter((p) => p.alive)
+      .forEach((p) => {
+        const v = finalVotes[p.id]
+        if (!v) return
+        const weight = p.role === 'Mayor' ? 2 : 1
+        if (v === 'yes') yes += weight
+        else no += weight
+      })
+    const accused = players.find((p) => p.id === defenseCandidateId)
+    if (yes > no && accused) {
+      if (window.confirm(`Confirm elimination of ${accused.name}?`)) {
+        const updated = markKilled(defenseCandidateId, 'voted out during the day')
+        setPlayers(updated)
+      }
+    } else {
+      pushEvent('Town failed to reach majority for elimination.')
+    }
+    setRoundNumber((r) => r + 1)
+    setPhaseTransitionText('Night falls...')
+    setTimeout(() => setPhaseTransitionText(''), 850)
+    setPhase('night')
+    setNightStep('intro')
+    setNominations({})
+    setDefenseCandidateId(null)
+    setDefenseTimeLeft(0)
+    setFinalVotes({})
+  }
+
+  function sniperAction(sniperId: string, targetId: string) {
+    const sniper = players.find((p) => p.id === sniperId)
+    if (!sniper || sniper.sniperUsed || !sniper.alive) return
+    if (!window.confirm('Use Sniper one-time shot?')) return
+    let updated = players.map((p) =>
+      p.id === sniperId ? { ...p, sniperUsed: true } : p,
+    )
+    const target = players.find((p) => p.id === targetId)
+    const innocent =
+      target?.role === 'Civilian' ||
+      target?.role === 'Mayor' ||
+      target?.role === 'Doctor' ||
+      target?.role === 'Detective' ||
+      target?.role === 'Sniper' ||
+      target?.role === 'Grandmother' ||
+      target?.role === 'Spy'
+    if (target?.alive) {
+      updated = markKilled(targetId, 'shot by the Sniper', false, updated)
+    }
+    if (innocent) {
+      updated = markKilled(sniperId, 'died from guilt after shooting an innocent', true, updated)
+    }
+    setPlayers(updated)
+    playTone('kill')
+  }
+
+  function saveHistorySnapshot() {
+    const snapshot = `Game ${new Date().toLocaleString()} - winner: ${
+      winner ?? 'none'
+    } - rounds: ${roundNumber}`
+    const next = [snapshot, ...history].slice(0, 20)
+    setHistory(next)
+    localStorage.setItem('mafiaWars.history', JSON.stringify(next))
+  }
+
+  useEffect(() => {
+    if (winner) saveHistorySnapshot()
+  }, [winner]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  function roleBreakdownText() {
+    const grouped: Record<string, number> = {}
+    players.forEach((p) => {
+      if (!p.role) return
+      grouped[p.role] = (grouped[p.role] ?? 0) + 1
+    })
+    return Object.entries(grouped)
+      .map(([k, v]) => `${v} ${k}`)
+      .join(', ')
+  }
+
+  function updateLastWill(id: string, text: string) {
+    setPlayers((prev) => {
+      return prev.map((p) => (p.id === id ? { ...p, lastWill: text } : p))
+    })
+  }
+
+  // --- UI sections ---
+
+  function renderLanding() {
+    return (
+      <div className="app-shell landing">
+        <img
+          src={landingPageImage}
+          alt=""
+          className="landing-hero-image"
+        />
+        <div className="landing-overlay" aria-hidden="true" />
+        <div className="landing-smoke landing-smoke-1" aria-hidden="true" />
+        <div className="landing-smoke landing-smoke-2" aria-hidden="true" />
+        <div className="landing-smoke landing-smoke-3" aria-hidden="true" />
+        <div className="landing-content hero-card-animate">
+          <h1 className="hero-title">Mafia Wars</h1>
+          <div className="hero-title-divider" aria-hidden="true" />
+          <p className="tagline">Fast party nights. Secret roles. Perfect shuffle.</p>
+          <p className="hint hint-fade-in">We&apos;ll take you to the game setup in a moment...</p>
+        </div>
+        <div className="landing-progress" aria-hidden="true" />
+      </div>
+    )
+  }
+
+  function renderModeSelect() {
+    const count = players.length
+    const canToggleFamilyText = canUseSpecialFamily
+      ? 'You can add Godfather and Grandmother.'
+      : 'Godfather & Grandmother are only allowed with 6+ players.'
+
+    return (
+      <div className="app-shell mode-select">
+        <img
+          src={landingPageImage}
+          alt=""
+          className="mode-select-bg-image"
+        />
+        <div className="mode-select-overlay" aria-hidden="true" />
+        <div className="mode-select-content mode-select-panel-animate">
+          <div className="mode-select-roles-row">
+            <div className="mode-role-icon mode-role-gf">
+              <img src={godfatherImage} alt="Godfather" />
+              <span className="mode-role-label">Godfather</span>
+            </div>
+            <div className="mode-role-icon mode-role-m">
+              <img src={mafiaImage} alt="Mafia" />
+              <span className="mode-role-label">Mafia</span>
+            </div>
+            <div className="mode-role-icon mode-role-gm">
+              <img src={grandmotherImage} alt="Grandmother" />
+              <span className="mode-role-label">Grandmother</span>
+            </div>
+            <div className="mode-role-icon mode-role-dr">
+              <img src={doctorImage} alt="Doctor" />
+              <span className="mode-role-label">Doctor</span>
+            </div>
+            <div className="mode-role-icon mode-role-d">
+              <img src={detectiveImage} alt="Detective" />
+              <span className="mode-role-label">Detective</span>
+            </div>
+            <div className="mode-role-icon mode-role-c">
+              <img src={civiliansImage} alt="Civilians" />
+              <span className="mode-role-label">Civilians</span>
+            </div>
+          </div>
+          <h1 className="mode-select-title">Mafia Wars</h1>
+          <div className="mode-select-divider" aria-hidden="true" />
+          <p className="mode-select-subtitle">How do you want to play?</p>
+          <div className="mode-cards">
+            <button
+              type="button"
+              className="mode-card mode-card-offline"
+              onClick={() => handleSelectPlayType('offline')}
+            >
+              <span className="mode-card-emoji" aria-hidden="true">🎲</span>
+              <span className="mode-card-title">Offline</span>
+              <span className="mode-card-subtitle">Tabletop Host</span>
+            </button>
+            <button
+              type="button"
+              className="mode-card mode-card-online"
+              onClick={() => handleSelectPlayType('online')}
+            >
+              <span className="mode-card-emoji" aria-hidden="true">🌐</span>
+              <span className="mode-card-title">Online</span>
+              <span className="mode-card-subtitle">Share a Room</span>
+            </button>
+          </div>
+          <div className="mode-rules-box">
+            <p className="mode-rules-title">
+              <span aria-hidden="true">📋</span> PLAYER RULES
+            </p>
+            <ul className="mode-rules-list">
+              <li>Minimum 4 players. No maximum.</li>
+              <li>{canToggleFamilyText}</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  function renderRoomOptionsOnline() {
+    return (
+      <div className="room-options">
+        <h2>Online room</h2>
+        <div className="field-row">
+          <label>Suggest a room name</label>
+          <input
+            value={roomConfig.roomName}
+            onChange={(e) =>
+              setRoomConfig((prev) => ({ ...prev, roomName: e.target.value }))
+            }
+            placeholder="e.g. Friday Night Mafia"
+          />
+        </div>
+        <div className="field-row">
+          <label>Password / room code</label>
+          <input
+            value={roomConfig.password}
+            onChange={(e) =>
+              setRoomConfig((prev) => ({ ...prev, password: e.target.value }))
+            }
+            placeholder="Create a simple join code"
+          />
+        </div>
+        <button className="outline" onClick={handleGenerateShare}>
+          Share room
+        </button>
+        {generatedShareCode && (
+          <p className="code-display">
+            Share this code: <strong>{generatedShareCode}</strong>
+          </p>
+        )}
+        <p className="helper">
+          Other players join by entering the same room name and password on
+          their devices.
+        </p>
+      </div>
+    )
+  }
+
+  function renderRoomOptionsOffline() {
+    return (
+      <div className="room-options">
+        <h2>Offline game</h2>
+        <p className="helper">
+          A human at the table will act as the host. Everyone can still see their
+          role on their own phone if you like.
+        </p>
+      </div>
+    )
+  }
+
+  function renderLobby() {
+    const count = players.length
+    const canToggle = canUseSpecialFamily
+
+    return (
+      <div className="app-shell lobby">
+        <div className="panel wide">
+          <header className="panel-header">
+            <div>
+              <h1>Lobby</h1>
+              <p className="subtitle">
+                {playType === 'online'
+                  ? isHost
+                    ? 'You are the host. Add players then start the game.'
+                    : 'Waiting for the host to start the game.'
+                  : 'Add players and start when everyone is ready.'}
+              </p>
+            </div>
+            <div className="badge-row">
+              <span className="badge">
+                {playType === 'online' ? 'Online' : 'Offline'} game
+              </span>
+              <span className="badge secondary-badge">
+                {count} player{count === 1 ? '' : 's'}
+              </span>
+            </div>
+          </header>
+
+          {playType === 'online'
+            ? renderRoomOptionsOnline()
+            : renderRoomOptionsOffline()}
+
+          <div className="divider" />
+
+          <div className="players-section">
+            <div className="field-row inline">
+              <input
+                value={pendingName}
+                onChange={(e) => setPendingName(e.target.value)}
+                placeholder="Add player name"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') addPlayer()
+                }}
+              />
+              <select
+                className="avatar-select"
+                value={pendingAvatar}
+                onChange={(e) => setPendingAvatar(e.target.value)}
+              >
+                {avatars.map((a) => (
+                  <option key={a} value={a}>
+                    {a}
+                  </option>
+                ))}
+              </select>
+              <button className="primary" onClick={addPlayer}>
+                Add
+              </button>
+            </div>
+
+            <div className="players-list">
+              {players.length === 0 ? (
+                <p className="helper">No players yet. Add at least 3 to begin.</p>
+              ) : (
+                players.map((p, idx) => (
+                  <div key={p.id} className="player-pill">
+                    <span className="avatar-circle small">
+                      {p.avatar || idx + 1}
+                    </span>
+                    <span className="name">{p.name}</span>
+                    <button
+                      className="ghost"
+                      onClick={() => removePlayer(p.id)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="divider" />
+
+          <div className="options-row">
+            <div className="toggle-group">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={roomConfig.includeGodfather && canToggle}
+                  disabled={!canToggle}
+                  onChange={(e) =>
+                    setRoomConfig((prev) => ({
+                      ...prev,
+                      includeGodfather: e.target.checked,
+                    }))
+                  }
+                />
+                <span>Include Godfather</span>
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={roomConfig.includeGrandmother && canToggle}
+                  disabled={!canToggle}
+                  onChange={(e) =>
+                    setRoomConfig((prev) => ({
+                      ...prev,
+                      includeGrandmother: e.target.checked,
+                    }))
+                  }
+                />
+                <span>Include Grandmother</span>
+              </label>
+              {!canToggle && (
+                <p className="helper tiny">
+                  Godfather / Grandmother become available once you have 6 or more
+                  players and at least 3 total.
+                </p>
+              )}
+            </div>
+
+            <button
+              className="primary large"
+              disabled={!minPlayersSatisfied}
+              onClick={startGame}
+            >
+              Start game
+            </button>
+          </div>
+          <div className="settings-row">
+            <button className="secondary" onClick={() => setShowSettings((v) => !v)}>
+              Game settings
+            </button>
+            <button className="outline" onClick={() => setShowHowToPlay(true)}>
+              How to play
+            </button>
+            <button className="outline" onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}>
+              Theme: {theme}
+            </button>
+          </div>
+          {showSettings && (
+            <div className="settings-panel">
+              <label>
+                Defense timer (seconds)
+                <input
+                  type="number"
+                  value={settings.defenseTimerSec}
+                  min={10}
+                  max={90}
+                  onChange={(e) =>
+                    setSettings((s) => ({ ...s, defenseTimerSec: Number(e.target.value) || 30 }))
+                  }
+                />
+              </label>
+              <label><input type="checkbox" checked={settings.allowSpy} onChange={(e) => setSettings((s) => ({ ...s, allowSpy: e.target.checked }))} />Allow Spy</label>
+              <label><input type="checkbox" checked={settings.allowMayor} onChange={(e) => setSettings((s) => ({ ...s, allowMayor: e.target.checked }))} />Allow Mayor</label>
+              <label><input type="checkbox" checked={settings.allowSniper} onChange={(e) => setSettings((s) => ({ ...s, allowSniper: e.target.checked }))} />Allow Sniper</label>
+              <label><input type="checkbox" checked={settings.allowSerialKiller} onChange={(e) => setSettings((s) => ({ ...s, allowSerialKiller: e.target.checked }))} />Allow Serial Killer</label>
+            </div>
+          )}
+        </div>
+        {showHowToPlay && (
+          <div className="win-overlay">
+            <div className="win-modal">
+              <h2>How to Play</h2>
+              <p className="helper">Night is sequential: Mafia, Serial Killer, Doctor, Detective, then results.</p>
+              <p className="helper">Day has nomination, defense timer, then weighted vote (Mayor = double).</p>
+              <button className="primary" onClick={() => setShowHowToPlay(false)}>Close</button>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  function renderGame() {
+    const alivePlayers = players.filter((p) => p.alive)
+    const mafiaTeammates = alivePlayers.filter((p) => p.role === 'Mafia' || p.role === 'Godfather')
+    const detective = players.find((p) => p.role === 'Detective')
+    const privateNotes = detective ? events.filter((e) => e.privateTo === detective.id) : []
+    const publicEvents = events.filter((e) => !e.privateTo)
+    const nomineeName = players.find((p) => p.id === defenseCandidateId)?.name
+    const yesVotes = alivePlayers.reduce((sum, p) => sum + (finalVotes[p.id] === 'yes' ? (p.role === 'Mayor' ? 2 : 1) : 0), 0)
+    const noVotes = alivePlayers.reduce((sum, p) => sum + (finalVotes[p.id] === 'no' ? (p.role === 'Mayor' ? 2 : 1) : 0), 0)
+
+    return (
+      <div className="app-shell game">
+        {phaseTransitionText && (
+          <div className="phase-transition-overlay">{phaseTransitionText}</div>
+        )}
+        <div className="panel wide">
+          <header className="panel-header">
+            <div>
+              <h1>Role cards</h1>
+              <p className="subtitle">
+                Structured game flow with role abilities, cooldowns, voting and logs.
+              </p>
+            </div>
+            <div className="badge-row">
+              <span className="badge">{phase === 'night' ? 'Night' : 'Day'} phase</span>
+              <span className="badge secondary-badge">Round {roundNumber}</span>
+            </div>
+          </header>
+
+          <div className="cards-grid">
+            {players.map((p) => (
+              <div
+                key={p.id}
+                className="card-role"
+                onClick={() => toggleCardFlip(p.id)}
+              >
+                <div
+                  className={`card-inner ${
+                    flippedCards[p.id] ? 'flipped' : ''
+                  }`}
+                >
+                  <div className="card-face back">
+                    <img
+                      src={cardBackImage}
+                      alt="Card back"
+                      className="card-back-image"
+                    />
+                  </div>
+                  <div className="card-face front">
+                    <div className="role-chip">{p.role}</div>
+                    {p.role && (
+                      <div className="role-description">
+                        {roleDescriptions[p.role]}
+                      </div>
+                    )}
+                    <div className="player-name">{p.name}</div>
+                    <small>{p.avatar}</small>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {phase === 'night' ? (
+            <div className="phase-section">
+              <div className="phase-header">
+                <span className="phase-badge">🌙 Night sequence</span>
+                <span className="round-badge">Step: {nightStep}</span>
+              </div>
+              {nightStep === 'intro' && <p className="phase-text">Everyone close your eyes.</p>}
+              {nightStep === 'mafia' && (
+                <>
+                  <p className="phase-text">Mafia, open your eyes - choose your target.</p>
+                  <p className="helper">Mafia teammates: {mafiaTeammates.map((p) => p.name).join(', ') || 'None'}</p>
+                  <div className="kill-grid">
+                    {alivePlayers.map((p) => (
+                      <button key={p.id} className={`pill-button ${nightChoices.mafiaTargetId === p.id ? 'dead' : ''}`} onClick={() => setNightChoices((n) => ({ ...n, mafiaTargetId: p.id }))}>
+                        {p.name}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+              {nightStep === 'serial' && (
+                <>
+                  <p className="phase-text">Serial Killer, open your eyes - choose your target.</p>
+                  <div className="kill-grid">
+                    {alivePlayers.map((p) => (
+                      <button key={p.id} className={`pill-button ${nightChoices.serialTargetId === p.id ? 'dead' : ''}`} onClick={() => setNightChoices((n) => ({ ...n, serialTargetId: p.id }))}>
+                        {p.name}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+              {nightStep === 'doctor' && (
+                <>
+                  <p className="phase-text">Doctor, open your eyes - choose who to save.</p>
+                  <p className="helper">Cooldown: cannot save same player twice in a row.</p>
+                  <div className="kill-grid">
+                    {alivePlayers.map((p) => (
+                      <button
+                        key={p.id}
+                        disabled={doctorLastSavedId === p.id}
+                        className={`pill-button ${nightChoices.doctorSaveId === p.id ? 'dead' : ''}`}
+                        onClick={() => setNightChoices((n) => ({ ...n, doctorSaveId: p.id }))}
+                      >
+                        {p.name}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+              {nightStep === 'detective' && (
+                <>
+                  <p className="phase-text">Detective, open your eyes - choose who to investigate.</p>
+                  <div className="kill-grid">
+                    {alivePlayers.map((p) => (
+                      <button key={p.id} className={`pill-button ${nightChoices.detectiveTargetId === p.id ? 'dead' : ''}`} onClick={() => setNightChoices((n) => ({ ...n, detectiveTargetId: p.id }))}>
+                        {p.name}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+              {nightStep === 'results' && (
+                <p className="phase-text">Everyone open your eyes - results will be revealed.</p>
+              )}
+              <button className="secondary" onClick={handleNightNext}>
+                {nightStep === 'results' ? 'Reveal results and switch to day' : 'Next step'}
+              </button>
+            </div>
+          ) : (
+            <div className="phase-section">
+              <div className="phase-header">
+                <span className="phase-badge">☀️ Day voting</span>
+                <span className="round-badge">Majority elimination</span>
+              </div>
+              {!defenseCandidateId ? (
+                <>
+                  <p className="phase-text">Nominate players. Live tally updates below.</p>
+                  <div className="kill-grid">
+                    {alivePlayers.map((p) => (
+                      <button key={p.id} className="pill-button" onClick={() => nominatePlayer(p.id)}>
+                        Nominate {p.name} ({nominations[p.id] ?? 0})
+                      </button>
+                    ))}
+                  </div>
+                  <button className="secondary" onClick={beginDefense}>Start defense speech</button>
+                </>
+              ) : (
+                <>
+                  <p className="phase-text">
+                    {nomineeName} has 30 seconds to defend. Time left: {defenseTimeLeft}s
+                  </p>
+                  <div className="kill-grid">
+                    {alivePlayers.map((p) => (
+                      <div key={p.id} className="player-pill">
+                        <span>{p.name} {p.role === 'Mayor' ? '(Mayor x2)' : ''}</span>
+                        <button className="pill-button" onClick={() => castFinalVote(p.id, 'yes')}>Yes</button>
+                        <button className="pill-button" onClick={() => castFinalVote(p.id, 'no')}>No</button>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="helper">Vote tally: Yes {yesVotes} / No {noVotes}</p>
+                  <button className="primary" onClick={finalizeDayVote}>Finalize vote</button>
+                </>
+              )}
+            </div>
+          )}
+
+          <div className="divider" />
+
+          <div className="bottom-row">
+            <div className="kill-controls">
+              <label className="helper">Role abilities and last will</label>
+              <div className="kill-grid">
+                {players.map((p) => (
+                  <div key={p.id} className="player-pill">
+                    <span>{p.name}</span>
+                    {p.role === 'Sniper' && p.alive && (
+                      <button
+                        className="pill-button"
+                        disabled={p.sniperUsed}
+                        onClick={() => {
+                          const target = prompt(`Sniper target by ${p.name} (type exact player name):`)
+                          const targetPlayer = players.find((x) => x.name.toLowerCase() === target?.toLowerCase())
+                          if (targetPlayer) sniperAction(p.id, targetPlayer.id)
+                        }}
+                      >
+                        {p.sniperUsed ? 'Shot used' : 'Use Sniper shot'}
+                      </button>
+                    )}
+                    <input
+                      className="will-input"
+                      placeholder="Last will..."
+                      value={p.lastWill}
+                      onChange={(e) => updateLastWill(p.id, e.target.value)}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+            <button className="primary large" onClick={endGame}>
+              End game & show summary
+            </button>
+          </div>
+          <div className="divider" />
+          <div className="summary-columns">
+            <div>
+              <h2>Game Event Log</h2>
+              <ul className="summary-list">
+                {publicEvents.slice(-8).map((e) => (
+                  <li key={e.id}>
+                    <span className="name">R{e.round} {e.phase}</span>
+                    <span>{e.message}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <h2>Detective Notes (private)</h2>
+              <ul className="summary-list">
+                {privateNotes.length === 0 ? (
+                  <li><span className="helper">No investigations yet.</span></li>
+                ) : (
+                  privateNotes.slice(-6).map((e) => (
+                    <li key={e.id}><span>{e.message}</span></li>
+                  ))
+                )}
+              </ul>
+            </div>
+          </div>
+        </div>
+        {winner && (
+          <div className="win-overlay">
+            <div className="win-modal">
+              <h2>
+                {winner === 'civilians'
+                  ? '🎉 Civilians Win!'
+                  : winner === 'serial'
+                    ? '🔪 Serial Killer Wins Alone!'
+                    : '💀 Mafia Wins!'}
+              </h2>
+              <button className="primary large" onClick={endGame}>
+                See Summary
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  function renderSummary() {
+    const mafias = players.filter(
+      (p) => p.role === 'Mafia' || p.role === 'Godfather',
+    )
+    const civilians = players.filter(
+      (p) =>
+        p.role === 'Civilian' ||
+        p.role === 'Grandmother' ||
+        p.role === 'Doctor' ||
+        p.role === 'Detective' ||
+        p.role === 'Spy' ||
+        p.role === 'Sniper' ||
+        p.role === 'Mayor',
+    )
+    const neutrals = players.filter((p) => p.role === 'Serial Killer')
+
+    return (
+      <div className="app-shell summary">
+        <div className="panel wide">
+          <header className="panel-header">
+            <div>
+              <h1>Game summary</h1>
+              <p className="subtitle">
+                Everyone sees who was Mafia, Civilian and special roles.
+              </p>
+            </div>
+          </header>
+
+          <div className="summary-columns">
+            <div>
+              <h2>Mafia family</h2>
+              {mafias.length === 0 ? (
+                <p className="helper">No mafias this game.</p>
+              ) : (
+                <ul className="summary-list">
+                  {mafias.map((p) => (
+                    <li key={p.id}>
+                      <span className="name">{p.name}</span>
+                      <span className="role-tag">{p.role}</span>
+                      <span className={`status ${p.alive ? 'alive' : 'dead'}`}>
+                        {p.alive ? 'Survived' : 'Killed'}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div>
+              <h2>Civilians & specials</h2>
+              {civilians.length === 0 ? (
+                <p className="helper">No civilians this game.</p>
+              ) : (
+                <ul className="summary-list">
+                  {civilians.map((p) => (
+                    <li key={p.id}>
+                      <span className="name">{p.name}</span>
+                      <span className="role-tag">{p.role}</span>
+                      <span className={`status ${p.alive ? 'alive' : 'dead'}`}>
+                        {p.alive ? 'Survived' : 'Killed'}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div>
+              <h2>Neutral</h2>
+              {neutrals.length === 0 ? (
+                <p className="helper">No neutral roles this game.</p>
+              ) : (
+                <ul className="summary-list">
+                  {neutrals.map((p) => (
+                    <li key={p.id}>
+                      <span className="name">{p.name}</span>
+                      <span className="role-tag">{p.role}</span>
+                      <span className={`status ${p.alive ? 'alive' : 'dead'}`}>
+                        {p.alive ? 'Survived' : 'Killed'}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+
+          <div className="divider" />
+          <h2>Public Event History</h2>
+          <ul className="summary-list">
+            {events.filter((e) => !e.privateTo).map((e) => (
+              <li key={e.id}>
+                <span className="name">R{e.round}</span>
+                <span>{e.message}</span>
+              </li>
+            ))}
+          </ul>
+          <div className="divider" />
+          <h2>Saved Game History (localStorage)</h2>
+          <ul className="summary-list">
+            {history.map((h) => (
+              <li key={h}><span>{h}</span></li>
+            ))}
+          </ul>
+          <div className="divider" />
+          <p className="helper">Role breakdown: {roleBreakdownText() || 'N/A'}</p>
+          <div className="divider" />
+
+          <div className="bottom-row">
+            <button className="secondary" onClick={resetToLobby}>
+              Play again with same lobby
+            </button>
+            <button
+              className="ghost"
+              onClick={() => {
+                setPlayers([])
+                setRoomConfig({
+                  roomName: '',
+                  password: '',
+                  type: 'online',
+                  includeGodfather: false,
+                  includeGrandmother: false,
+                })
+                setPlayType(null)
+                setGeneratedShareCode('')
+                setMode('mode-select')
+                setEvents([])
+                setNightChoices({})
+                setNominations({})
+                setDefenseCandidateId(null)
+                setFinalVotes({})
+              }}
+            >
+              New game
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  let content: JSX.Element
+  if (mode === 'landing') content = renderLanding()
+  else if (mode === 'mode-select') content = renderModeSelect()
+  else if (mode === 'lobby') content = renderLobby()
+  else if (mode === 'game') content = renderGame()
+  else content = renderSummary()
+
+  return content
+}
+
+export default App
+
+```
+
+### File: `src/App.css`
+```css
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 1.5rem;
+  background: radial-gradient(circle at top, #1f2933, #050709 52%, #020308);
+  color: #f9fafb;
+}
+
+/* Landing screen – full-screen image */
+.app-shell.landing {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+.landing-hero-image {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100vw;
+  height: 100vh;
+  object-fit: cover;
+  object-position: center;
+}
+
+.landing-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.3) 0%,
+    rgba(0, 0, 0, 0.6) 60%,
+    rgba(0, 0, 0, 0.92) 100%
+  );
+  pointer-events: none;
+}
+
+.landing-smoke {
+  position: absolute;
+  inset: 0;
+  z-index: 1.5;
+  border-radius: 50%;
+  filter: blur(80px);
+  pointer-events: none;
+}
+
+.landing-smoke-1 {
+  width: 60%;
+  height: 60%;
+  left: 10%;
+  top: 20%;
+  background: #fff;
+  opacity: 0.06;
+  animation: landing-smoke-pulse 10s ease-in-out infinite;
+}
+
+.landing-smoke-2 {
+  width: 50%;
+  height: 50%;
+  right: 5%;
+  bottom: 15%;
+  background: #fff;
+  opacity: 0.05;
+  animation: landing-smoke-pulse 12s ease-in-out infinite 1s;
+}
+
+.landing-smoke-3 {
+  width: 45%;
+  height: 45%;
+  left: 30%;
+  bottom: 10%;
+  background: #fff;
+  opacity: 0.04;
+  animation: landing-smoke-pulse 8s ease-in-out infinite 0.5s;
+}
+
+@keyframes landing-smoke-pulse {
+  0%, 100% { opacity: 0.03; }
+  50% { opacity: 0.12; }
+}
+
+.panel {
+  background: rgba(15, 23, 42, 0.96);
+  border-radius: 24px;
+  padding: 2.5rem 2.25rem;
+  max-width: 720px;
+  width: 100%;
+  box-shadow:
+    0 18px 45px rgba(0, 0, 0, 0.65),
+    0 0 0 1px rgba(148, 163, 184, 0.18);
+  backdrop-filter: blur(18px);
+}
+
+.panel.wide {
+  max-width: 960px;
+}
+
+.panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.5rem;
+  margin-bottom: 1.75rem;
+}
+
+.panel-header h1 {
+  font-size: 2.3rem;
+  letter-spacing: 0.04em;
+  margin: 0 0 0.25rem;
+}
+
+.subtitle {
+  margin: 0;
+  color: #9ca3af;
+  font-size: 0.95rem;
+}
+
+.badge-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.badge {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid rgba(248, 250, 252, 0.14);
+  background: radial-gradient(circle at top left, #f97316, #b91c1c);
+}
+
+.secondary-badge {
+  background: rgba(15, 23, 42, 0.9);
+}
+
+/* Mode select – full-screen image + overlay */
+.app-shell.mode-select {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  min-height: 100vh;
+  overflow: hidden;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+.mode-select-bg-image {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100vw;
+  height: 100vh;
+  object-fit: cover;
+  object-position: center;
+}
+
+.mode-select-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.75) 0%,
+    rgba(0, 0, 0, 0.88) 100%
+  );
+  pointer-events: none;
+}
+
+.mode-select-content {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 2rem 1.5rem;
+}
+
+.mode-select-panel-animate {
+  animation: mode-select-panel-enter 0.7s ease-out forwards;
+}
+
+@keyframes mode-select-panel-enter {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Animated role icons row */
+.mode-select-roles-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin-bottom: 2rem;
+  flex-wrap: wrap;
+}
+
+.mode-role-icon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  width: 64px;
+}
+
+.mode-role-icon img {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  object-fit: cover;
+  animation: mode-role-float 3s ease-in-out infinite;
+}
+
+.mode-role-icon:nth-child(1) img { animation-delay: 0s; }
+.mode-role-icon:nth-child(2) img { animation-delay: 0.3s; }
+.mode-role-icon:nth-child(3) img { animation-delay: 0.6s; }
+.mode-role-icon:nth-child(4) img { animation-delay: 0.9s; }
+.mode-role-icon:nth-child(5) img { animation-delay: 1.2s; }
+.mode-role-icon:nth-child(6) img { animation-delay: 1.5s; }
+
+@keyframes mode-role-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+.mode-role-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #6b7280;
+}
+
+.mode-select-title {
+  font-size: 2.5rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  background: linear-gradient(to right, #f97316, #ffffff);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  margin: 0 0 0.25rem;
+}
+
+.mode-select-divider {
+  width: 80px;
+  height: 1px;
+  background: linear-gradient(90deg, #f97316, #fbbf24);
+  margin: 0 auto;
+}
+
+.mode-select-subtitle {
+  margin: 0.5rem 0 1.5rem;
+  font-size: 0.95rem;
+  color: #9ca3af;
+}
+
+.mode-cards {
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+}
+
+.mode-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  width: 200px;
+  height: 140px;
+  padding: 1rem;
+  border-radius: 1rem;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  color: #f9fafb;
+  cursor: pointer;
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+}
+
+.mode-card:hover {
+  transform: scale(1.05);
+}
+
+.mode-card-emoji {
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.mode-card-title {
+  font-weight: 700;
+  font-size: 0.95rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.mode-card-subtitle {
+  font-size: 0.75rem;
+  color: #9ca3af;
+}
+
+.mode-card-offline:hover {
+  box-shadow: 0 0 24px rgba(249, 115, 22, 0.5);
+  border-color: #f97316;
+}
+
+.mode-card-online:hover {
+  box-shadow: 0 0 24px rgba(59, 130, 246, 0.5);
+  border-color: #3b82f6;
+}
+
+.mode-rules-box {
+  max-width: 480px;
+  margin-top: 1.5rem;
+  padding: 1rem 1.25rem;
+  background: rgba(15, 23, 42, 0.6);
+  border-left: 3px solid #f97316;
+  border-radius: 12px;
+  text-align: left;
+}
+
+.mode-rules-title {
+  margin: 0 0 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: #f97316;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.mode-rules-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  color: #d1d5db;
+  font-size: 0.85rem;
+}
+
+.mode-rules-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.15rem 0;
+}
+
+.mode-rules-list li::before {
+  content: '•';
+  color: #f97316;
+  flex-shrink: 0;
+}
+
+.mode-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0 2rem;
+}
+
+.primary,
+.secondary,
+.ghost,
+.outline {
+  border-radius: 999px;
+  border: 1px solid transparent;
+  padding: 0.7rem 1.4rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    background 0.18s ease-out,
+    color 0.18s ease-out,
+    border-color 0.18s ease-out,
+    transform 0.12s ease-out,
+    box-shadow 0.12s ease-out;
+}
+
+.primary {
+  background: linear-gradient(135deg, #f97316, #b91c1c);
+  color: #f9fafb;
+  box-shadow: 0 8px 22px rgba(248, 113, 22, 0.45);
+}
+
+.primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 30px rgba(248, 113, 22, 0.55);
+}
+
+.primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.secondary {
+  background: rgba(15, 23, 42, 0.9);
+  color: #e5e7eb;
+  border-color: rgba(148, 163, 184, 0.45);
+}
+
+.secondary:hover {
+  background: rgba(30, 64, 175, 0.9);
+  border-color: rgba(129, 140, 248, 0.7);
+}
+
+.ghost {
+  background: transparent;
+  color: #9ca3af;
+  border-color: transparent;
+}
+
+.ghost:hover {
+  color: #e5e7eb;
+  border-color: rgba(148, 163, 184, 0.5);
+}
+
+.outline {
+  background: transparent;
+  color: #e5e7eb;
+  border-color: rgba(248, 250, 252, 0.35);
+}
+
+.outline:hover {
+  background: rgba(15, 23, 42, 0.9);
+}
+
+.large {
+  padding-inline: 2.4rem;
+}
+
+.divider {
+  border-top: 1px dashed rgba(148, 163, 184, 0.45);
+  margin: 1.75rem 0 1.25rem;
+}
+
+.role-rules ul {
+  list-style: none;
+  padding: 0;
+  margin: 0.4rem 0 0;
+  color: #9ca3af;
+  font-size: 0.9rem;
+}
+
+.role-rules li::before {
+  content: '•';
+  margin-right: 0.35rem;
+  color: #f97316;
+}
+
+
+.hero-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 2.5rem;
+  align-items: center;
+  padding: 2.75rem;
+  border-radius: 28px;
+  background: radial-gradient(circle at top left, #f97316 0, #030712 52%, #020308);
+  box-shadow:
+    0 24px 55px rgba(0, 0, 0, 0.85),
+    0 0 0 1px rgba(148, 163, 184, 0.16);
+}
+
+.hero-card-animate {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  animation: hero-card-enter 0.8s ease-out forwards;
+}
+
+.landing-content .hero-title-divider {
+  margin: 0 auto 0.75rem;
+}
+
+@keyframes hero-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.hero-art {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.4rem;
+}
+
+.hero-godfather,
+.hero-mafias,
+.hero-grandma,
+.hero-civilians {
+  position: relative;
+  background: rgba(15, 23, 42, 0.9);
+  border-radius: 20px;
+  padding: 1.1rem 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+.hero-godfather {
+  border-top: 3px solid #f97316;
+}
+
+.hero-godfather:hover {
+  box-shadow: 0 0 18px rgba(249, 115, 22, 0.5);
+  transform: scale(1.04);
+}
+
+.hero-mafias {
+  border-top: 3px solid #991b1b;
+}
+
+.hero-mafias:hover {
+  box-shadow: 0 0 18px rgba(153, 27, 27, 0.5);
+  transform: scale(1.04);
+}
+
+.hero-grandma {
+  border-top: 3px solid #e11d48;
+}
+
+.hero-grandma:hover {
+  box-shadow: 0 0 18px rgba(225, 29, 72, 0.5);
+  transform: scale(1.04);
+}
+
+.hero-civilians {
+  border-top: 3px solid #22c55e;
+}
+
+.hero-civilians:hover {
+  box-shadow: 0 0 18px rgba(34, 197, 94, 0.5);
+  transform: scale(1.04);
+}
+
+.hero-card-inner-glow {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 60px;
+  border-radius: 20px 20px 0 0;
+  pointer-events: none;
+}
+
+.hero-glow-godfather {
+  background: linear-gradient(to bottom, rgba(249, 115, 22, 0.12), transparent);
+}
+
+.hero-glow-mafia {
+  background: linear-gradient(to bottom, rgba(153, 27, 27, 0.12), transparent);
+}
+
+.hero-glow-grandma {
+  background: linear-gradient(to bottom, rgba(225, 29, 72, 0.12), transparent);
+}
+
+.hero-glow-civilian {
+  background: linear-gradient(to bottom, rgba(34, 197, 94, 0.12), transparent);
+}
+
+.landing-progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  height: 3px;
+  background: rgba(249, 115, 22, 0.2);
+  overflow: hidden;
+}
+
+.landing-progress::after {
+  content: '';
+  display: block;
+  height: 100%;
+  width: 0;
+  background: #f97316;
+  animation: landing-progress-fill 5s linear forwards;
+}
+
+@keyframes landing-progress-fill {
+  to {
+    width: 100%;
+  }
+}
+
+.hero-text h1 {
+  font-size: 3rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  margin: 0 0 0.5rem;
+}
+
+.hero-text .hero-title,
+.landing-content .hero-title {
+  font-size: 5rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  background: linear-gradient(to right, #f97316, #ffffff);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  text-shadow: 0 0 40px rgba(249, 115, 22, 0.4);
+  margin: 0 0 0.5rem;
+}
+
+.hero-title-divider {
+  width: 120px;
+  height: 1px;
+  background: linear-gradient(90deg, #f97316, #fbbf24);
+  margin: 0 0 0.75rem;
+}
+
+.tagline {
+  margin: 0 0 0.75rem;
+  font-size: 1.05rem;
+  color: #e5e7eb;
+}
+
+.landing .tagline {
+  font-size: 1.15rem;
+  color: #f3f4f6;
+}
+
+.hint {
+  margin: 0;
+  color: #9ca3af;
+  font-size: 0.9rem;
+}
+
+.hint-fade-in {
+  color: #6b7280;
+  animation: hint-fade-in 1.5s ease-out 0.5s forwards;
+  opacity: 0;
+}
+
+@keyframes hint-fade-in {
+  to {
+    opacity: 1;
+  }
+}
+
+.avatar-circle {
+  width: 64px;
+  height: 64px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  border: 2px solid rgba(15, 23, 42, 0.9);
+}
+
+.landing .avatar-pulse-wrap {
+  position: relative;
+}
+
+.landing .avatar-pulse-wrap::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  animation: avatar-pulse-ring 2.5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes avatar-pulse-ring {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 0; transform: scale(1.15); }
+}
+
+.landing .hero-art .avatar-circle {
+  width: 72px;
+  height: 72px;
+}
+
+.avatar-circle.godfather {
+  background: radial-gradient(circle at top, #f97316, #7f1d1d);
+}
+
+.avatar-circle.mafia {
+  background: radial-gradient(circle at top, #991b1b, #020617);
+}
+
+.avatar-circle.grandma {
+  background: radial-gradient(circle at top, #e11d48, #1f2937);
+}
+
+.avatar-circle.civilian {
+  background: radial-gradient(circle at top, #22c55e, #064e3b);
+}
+
+.avatar-circle.small {
+  width: 32px;
+  height: 32px;
+  font-size: 0.85rem;
+}
+
+.label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: #9ca3af;
+}
+
+.field-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-bottom: 0.9rem;
+}
+
+.field-row.inline {
+  flex-direction: row;
+  align-items: center;
+}
+
+.field-row label {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: #9ca3af;
+}
+
+input {
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.6);
+  background: rgba(15, 23, 42, 0.9);
+  color: #f9fafb;
+  padding: 0.6rem 0.9rem;
+  font-size: 0.95rem;
+  outline: none;
+  transition:
+    border-color 0.16s ease-out,
+    box-shadow 0.16s ease-out,
+    background 0.16s ease-out;
+  flex: 1;
+}
+
+input::placeholder {
+  color: #6b7280;
+}
+
+input:focus {
+  border-color: #f97316;
+  box-shadow: 0 0 0 1px rgba(248, 113, 22, 0.6);
+}
+
+.players-section {
+  margin-top: 0.25rem;
+}
+
+.players-list {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.player-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.7rem 0.25rem 0.35rem;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid rgba(148, 163, 184, 0.7);
+}
+
+.player-pill .name {
+  font-size: 0.9rem;
+}
+
+.options-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.toggle-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.toggle-group label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  color: #e5e7eb;
+}
+
+.toggle-group input[type='checkbox'] {
+  width: auto;
+}
+
+.helper {
+  color: #9ca3af;
+  font-size: 0.9rem;
+  margin: 0.15rem 0 0;
+}
+
+.helper.tiny {
+  font-size: 0.78rem;
+}
+
+.room-options h2 {
+  margin: 0 0 0.4rem;
+}
+
+.code-display {
+  font-size: 0.9rem;
+  margin-top: 0.4rem;
+}
+
+.cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1rem;
+}
+
+.card-role {
+  position: relative;
+  height: 190px;
+  perspective: 1100px;
+  cursor: pointer;
+}
+
+.card-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  transition: transform 0.5s ease;
+}
+
+.card-inner.flipped {
+  transform: rotateY(180deg);
+}
+
+.card-face {
+  position: absolute;
+  inset: 0;
+  border-radius: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  backface-visibility: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.6);
+}
+
+.card-face.back {
+  background: radial-gradient(circle at top, #111827, #020617);
+  overflow: hidden;
+}
+
+.card-back-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain; /* show full image without cutting top/bottom */
+  border-radius: 18px;
+}
+
+.mafia-back {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.logo-letter {
+  font-size: 2.7rem;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+}
+
+.logo-text {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+}
+
+.card-face.front {
+  transform: rotateY(180deg);
+  background: radial-gradient(circle at top, #1f2937, #020617);
+}
+
+.role-description {
+  margin-bottom: 0.3rem;
+  font-size: 0.78rem;
+  color: #9ca3af;
+  text-align: center;
+  padding-inline: 0.5rem;
+}
+
+.role-chip {
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid rgba(248, 250, 252, 0.25);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  margin-bottom: 0.4rem;
+}
+
+.player-name {
+  font-weight: 600;
+}
+
+.phase-section {
+  margin-top: 1.5rem;
+  padding: 1rem 1rem 1.1rem;
+  border-radius: 16px;
+  background: radial-gradient(circle at top left, rgba(15, 23, 42, 0.95), rgba(2, 6, 23, 0.95));
+  border: 1px solid rgba(148, 163, 184, 0.5);
+}
+
+.phase-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.4rem;
+}
+
+.phase-badge,
+.round-badge {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+.phase-badge {
+  color: #f9fafb;
+}
+
+.round-badge {
+  color: #9ca3af;
+}
+
+.phase-text {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+  color: #e5e7eb;
+}
+
+.kill-controls {
+  flex: 1;
+}
+
+.kill-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+}
+
+.pill-button {
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.6);
+  background: rgba(15, 23, 42, 0.9);
+  color: #e5e7eb;
+  padding: 0.25rem 0.7rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.pill-button.dead {
+  opacity: 0.4;
+  text-decoration: line-through;
+}
+
+.bottom-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1.5rem;
+  margin-top: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.win-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.86);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  backdrop-filter: blur(8px);
+}
+
+.win-modal {
+  background: radial-gradient(circle at top, #111827, #020617);
+  border-radius: 24px;
+  padding: 2rem 2.5rem;
+  box-shadow:
+    0 20px 45px rgba(0, 0, 0, 0.85),
+    0 0 0 1px rgba(148, 163, 184, 0.5);
+  text-align: center;
+}
+
+.win-modal h2 {
+  margin: 0 0 1.25rem;
+  font-size: 1.8rem;
+}
+
+.summary-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1.5rem;
+}
+
+.summary-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.4rem 0 0;
+}
+
+.summary-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.9rem;
+  padding: 0.35rem 0;
+}
+
+.summary-list .name {
+  font-weight: 500;
+}
+
+.role-tag {
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.9);
+  font-size: 0.75rem;
+}
+
+.status {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+.status.alive {
+  color: #4ade80;
+}
+
+.status.dead {
+  color: #f97316;
+}
+
+body[data-theme='light'] .app-shell {
+  background: radial-gradient(circle at top, #e5e7eb, #f8fafc 52%, #ffffff);
+  color: #111827;
+}
+
+body[data-theme='light'] .panel {
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow:
+    0 18px 45px rgba(15, 23, 42, 0.15),
+    0 0 0 1px rgba(100, 116, 139, 0.18);
+}
+
+body[data-theme='light'] .subtitle,
+body[data-theme='light'] .helper {
+  color: #4b5563;
+}
+
+.avatar-select,
+.will-input,
+.settings-panel input[type='number'],
+.settings-panel select {
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.6);
+  background: rgba(15, 23, 42, 0.9);
+  color: #f9fafb;
+  padding: 0.45rem 0.55rem;
+}
+
+body[data-theme='light'] .avatar-select,
+body[data-theme='light'] .will-input,
+body[data-theme='light'] .settings-panel input[type='number'],
+body[data-theme='light'] .settings-panel select {
+  background: #ffffff;
+  color: #111827;
+}
+
+.settings-row {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 0.9rem;
+  flex-wrap: wrap;
+}
+
+.settings-panel {
+  margin-top: 0.8rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0.55rem;
+  padding: 0.9rem;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: rgba(15, 23, 42, 0.6);
+}
+
+.settings-panel label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+}
+
+.phase-transition-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(2, 6, 23, 0.88);
+  color: #f9fafb;
+  font-size: 2rem;
+  letter-spacing: 0.1em;
+  z-index: 70;
+  animation: phase-fade 0.85s ease-in-out forwards;
+}
+
+@keyframes phase-fade {
+  from {
+    opacity: 0;
+  }
+  40% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@media (max-width: 900px) {
+  .hero-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .panel,
+  .hero-card {
+    padding: 1.75rem 1.4rem;
+    border-radius: 20px;
+  }
+
+  .mode-select-content {
+    padding: 1.5rem 1rem;
+  }
+
+  .mode-select-title {
+    font-size: 2rem;
+  }
+
+  .mode-cards {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .mode-card {
+    width: 100%;
+    max-width: 280px;
+  }
+
+  .hero-text .hero-title,
+  .landing-content .hero-title {
+    font-size: 3.2rem;
+  }
+
+  .panel-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .badge-row {
+    flex-direction: row;
+  }
+
+  .options-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+```
+
+### File: `src/main.tsx`
+```tsx
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './index.css'
+import App from './App.tsx'
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
+
+```
+
+### File: `src/index.css`
+```css
+:root {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'SF Pro Text',
+    system-ui, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color-scheme: dark;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+button {
+  font-family: inherit;
+}
+
+```
+
+### File: `package.json`
+```json
+{
+  "name": "mafia-wars",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^16.5.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.48.0",
+    "vite": "^7.3.1"
+  }
+}
+
+```
+
+### File: `vite.config.ts`
+```ts
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [react()],
+})
+
+```
+
+### File: `tsconfig.json`
+```json
+{
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.app.json" },
+    { "path": "./tsconfig.node.json" }
+  ]
+}
+
+```
+
+### File: `tsconfig.app.json`
+```json
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "types": ["vite/client"],
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    /* Linting */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedSideEffectImports": true
+  },
+  "include": ["src"]
+}
+
+```
+
+### File: `tsconfig.node.json`
+```json
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "types": ["node"],
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+
+    /* Linting */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedSideEffectImports": true
+  },
+  "include": ["vite.config.ts"]
+}
+
+```
+
+### File: `eslint.config.js`
+```js
+import js from '@eslint/js'
+import globals from 'globals'
+import reactHooks from 'eslint-plugin-react-hooks'
+import reactRefresh from 'eslint-plugin-react-refresh'
+import tseslint from 'typescript-eslint'
+import { defineConfig, globalIgnores } from 'eslint/config'
+
+export default defineConfig([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{ts,tsx}'],
+    extends: [
+      js.configs.recommended,
+      tseslint.configs.recommended,
+      reactHooks.configs.flat.recommended,
+      reactRefresh.configs.vite,
+    ],
+    languageOptions: {
+      ecmaVersion: 2020,
+      globals: globals.browser,
+    },
+  },
+])
+
+```
+
+### File: `.vscode/settings.json`
+```json
+{
+    "liveServer.settings.port": 5501
+}
+```
+
