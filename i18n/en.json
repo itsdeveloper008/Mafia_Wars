@@ -1,0 +1,13 @@
+{
+  "app.name": "Mafia Wars",
+  "landing.tagline": "Premium multiplayer nights. A Game Master hosts.",
+  "lobby.title": "Lobby",
+  "lobby.roomCode": "Room Code",
+  "lobby.start": "Start Game",
+  "host.dashboard": "Host Dashboard",
+  "phase.night": "Night has fallen",
+  "phase.morning": "Morning has arrived",
+  "phase.voting": "Voting has begun",
+  "voice.holdToTalk": "Hold to Talk",
+  "voice.queue": "Speaking Queue"
+}

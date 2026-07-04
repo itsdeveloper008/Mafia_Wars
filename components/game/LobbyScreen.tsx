@@ -10,7 +10,9 @@ import {
   Video,
   VideoOff,
 } from 'lucide-react'
-import type { GameSession, RoomSettings } from '@/types/game'
+import { GAME_PRESETS } from '@/constants/settings'
+import type { GamePreset, GameSession, RoomSettings } from '@/types/game'
+import { SoundManager } from '@/services/audio/SoundManager'
 import { HostBadge, PlayerCard } from './PlayerCard'
 import {
   FadeIn,
@@ -158,6 +160,86 @@ export function LobbyScreen({
                 Game Settings
               </h2>
               <div className="mt-4 space-y-3">
+                {isHost && (
+                  <div>
+                    <p className="mb-2 font-mono text-[11px] uppercase tracking-wider text-slate-400">
+                      Preset
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {(
+                        Object.keys(GAME_PRESETS) as Exclude<
+                          GamePreset,
+                          'custom'
+                        >[]
+                      ).map((key) => (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => {
+                            SoundManager.play('click')
+                            onUpdateSettings({
+                              ...s,
+                              ...GAME_PRESETS[key],
+                            })
+                          }}
+                          className={`rounded-full px-3 py-1 font-mono text-[10px] uppercase tracking-wider ${
+                            s.preset === key
+                              ? 'bg-amber-glow text-navy-950'
+                              : 'bg-white/5 text-slate-300'
+                          }`}
+                        >
+                          {key}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <label className="flex items-center justify-between gap-3 text-sm text-slate-200">
+                  <span>Discussion mode</span>
+                  <select
+                    disabled={!isHost}
+                    value={s.discussionMode}
+                    onChange={(e) =>
+                      onUpdateSettings({
+                        ...s,
+                        discussionMode: e.target
+                          .value as RoomSettings['discussionMode'],
+                      })
+                    }
+                    className="rounded-lg border border-white/10 bg-navy-950 px-2 py-1 text-sm"
+                  >
+                    <option value="free">Free</option>
+                    <option value="moderated">Moderated</option>
+                    <option value="push_to_talk">Push-to-talk</option>
+                  </select>
+                </label>
+                <label className="flex items-center justify-between gap-3 text-sm text-slate-200">
+                  <span>Narrator</span>
+                  <select
+                    disabled={!isHost}
+                    value={s.narratorStyle}
+                    onChange={(e) =>
+                      onUpdateSettings({
+                        ...s,
+                        narratorStyle: e.target
+                          .value as RoomSettings['narratorStyle'],
+                      })
+                    }
+                    className="rounded-lg border border-white/10 bg-navy-950 px-2 py-1 text-sm"
+                  >
+                    <option value="classic">Classic</option>
+                    <option value="dark">Dark</option>
+                    <option value="female">Female</option>
+                    <option value="deep">Deep</option>
+                    <option value="robotic">Robotic</option>
+                  </select>
+                </label>
+                <Toggle
+                  label="Anonymous mode"
+                  checked={s.anonymousMode}
+                  disabled={!isHost}
+                  onChange={(v) => onUpdateSettings({ ...s, anonymousMode: v })}
+                />
                 <TimerField
                   label="Discussion (sec)"
                   value={s.discussionTime}

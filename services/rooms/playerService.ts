@@ -52,6 +52,10 @@ export async function joinAsPlayer(input: {
     notes: '',
     connectionQuality: 'good',
     missedVotes: 0,
+    isSpeaking: false,
+    canSpeak: true,
+    hostMuted: false,
+    pushToTalkHeld: false,
   }
 
   await setDoc(playerDoc(input.roomId, player.playerId), player)

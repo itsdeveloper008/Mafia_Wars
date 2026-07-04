@@ -7,6 +7,7 @@ import {
 } from 'firebase/firestore'
 import { DEFAULT_ROOM_SETTINGS } from '@/constants/settings'
 import type { GameStateDoc, RoomDoc, RoomSettings } from '@/types/game'
+// RoomDoc used in updateRoomFields
 import { codeIndexDoc, roomDoc, stateDoc } from './paths'
 
 export function generateRoomCode(): string {
@@ -36,6 +37,8 @@ export async function createRoom(input: {
     playerCount: 0,
     settings: { ...DEFAULT_ROOM_SETTINGS },
     paused: false,
+    speakingQueue: [],
+    currentSpeakerId: null,
   }
 
   const state: GameStateDoc = {
@@ -85,6 +88,13 @@ export async function setRoomPaused(
   paused: boolean,
 ): Promise<void> {
   await updateDoc(roomDoc(roomId), { paused, updatedAt: Date.now() })
+}
+
+export async function updateRoomFields(
+  roomId: string,
+  fields: Partial<RoomDoc>,
+): Promise<void> {
+  await updateDoc(roomDoc(roomId), { ...fields, updatedAt: Date.now() })
 }
 
 export function subscribeRoom(

@@ -26,9 +26,29 @@ export type ConnectionQuality = 'good' | 'ok' | 'poor' | 'offline'
 
 export type TieBreakMode = 'host' | 'revote' | 'none'
 
+export type DiscussionMode = 'free' | 'moderated' | 'push_to_talk'
+
+export type NarratorStyle =
+  | 'classic'
+  | 'dark'
+  | 'female'
+  | 'deep'
+  | 'robotic'
+
+export type MediaMode = 'voice_only' | 'voice_video' | 'none'
+
+export type GamePreset =
+  | 'beginner'
+  | 'competitive'
+  | 'fast'
+  | 'chaos'
+  | 'custom'
+
 export interface RoomSettings {
   voiceEnabled: boolean
   videoEnabled: boolean
+  mediaMode: MediaMode
+  discussionMode: DiscussionMode
   discussionTime: number
   votingTime: number
   nightTime: number
@@ -39,6 +59,15 @@ export interface RoomSettings {
   includeJester: boolean
   tieBreakMode: TieBreakMode
   theme: 'dark' | 'light'
+  anonymousMode: boolean
+  spectatorVoiceEnabled: boolean
+  forcePushToTalk: boolean
+  voiceLocked: boolean
+  narratorStyle: NarratorStyle
+  soundEnabled: boolean
+  musicEnabled: boolean
+  reducedMotion: boolean
+  preset: GamePreset
 }
 
 export interface RoomDoc {
@@ -55,6 +84,9 @@ export interface RoomDoc {
   playerCount: number
   settings: RoomSettings
   paused: boolean
+  /** Moderated speaking queue (playerIds). */
+  speakingQueue: string[]
+  currentSpeakerId: string | null
 }
 
 export interface PlayerDoc {
@@ -76,6 +108,10 @@ export interface PlayerDoc {
   notes: string
   connectionQuality: ConnectionQuality
   missedVotes: number
+  isSpeaking: boolean
+  canSpeak: boolean
+  hostMuted: boolean
+  pushToTalkHeld: boolean
 }
 
 /** Private — only host + owning player may read. */

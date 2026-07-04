@@ -33,7 +33,8 @@ service cloud.firestore {
           request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly([
               'isReady', 'raisedHand', 'micEnabled', 'cameraEnabled',
-              'notes', 'isConnected', 'connectionQuality', 'voteTarget', 'hasVoted'
+              'notes', 'isConnected', 'connectionQuality', 'voteTarget', 'hasVoted',
+              'isSpeaking', 'canSpeak', 'pushToTalkHeld'
             ]);
         allow update: if isHost(roomId);
         allow delete: if isHost(roomId) || isSelf(resource.data.uid);

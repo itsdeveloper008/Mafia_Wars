@@ -27,6 +27,7 @@ import {
   setRoomPaused,
   subscribeRoom,
   subscribeState,
+  updateRoomFields,
   updateRoomSettings,
 } from '@/services/rooms/roomService'
 import type {
@@ -267,10 +268,26 @@ export function useGameSession() {
         })
       },
       toggleHand: async () => {
-        if (!me) return
+        if (!me || !me.isAlive) return
+        const raising = !me.raisedHand
         await updatePlayerFields(room.roomId, me.playerId, {
-          raisedHand: !me.raisedHand,
+          raisedHand: raising,
         })
+        const queue = room.speakingQueue ?? []
+        if (raising && !queue.includes(me.playerId)) {
+          await updateRoomFields(room.roomId, {
+            speakingQueue: [...queue, me.playerId],
+          })
+        }
+        if (!raising) {
+          await updateRoomFields(room.roomId, {
+            speakingQueue: queue.filter((id) => id !== me.playerId),
+            currentSpeakerId:
+              room.currentSpeakerId === me.playerId
+                ? null
+                : room.currentSpeakerId,
+          })
+        }
       },
       kick: (playerId: string) => kickPlayer(room.roomId, playerId),
       startGame: async () => {
@@ -311,14 +328,67 @@ export function useGameSession() {
         )
       },
       acknowledgeHand: async (playerId: string) => {
+        const queue = (room.speakingQueue ?? []).filter((id) => id !== playerId)
+        await updatePlayerFields(room.roomId, playerId, {
+          raisedHand: false,
+          canSpeak: true,
+          micEnabled: true,
+        })
+        await updateRoomFields(room.roomId, {
+          speakingQueue: queue,
+          currentSpeakerId: playerId,
+        })
+      },
+      grantSpeak: async (playerId: string) => {
+        await Promise.all(
+          players.map((p) =>
+            updatePlayerFields(room.roomId, p.playerId, {
+              canSpeak: p.playerId === playerId,
+              micEnabled: p.playerId === playerId,
+            }),
+          ),
+        )
+        await updateRoomFields(room.roomId, {
+          currentSpeakerId: playerId,
+          speakingQueue: (room.speakingQueue ?? []).filter(
+            (id) => id !== playerId,
+          ),
+        })
         await updatePlayerFields(room.roomId, playerId, { raisedHand: false })
+      },
+      clearSpeaker: async () => {
+        await updateRoomFields(room.roomId, { currentSpeakerId: null })
+        await Promise.all(
+          players.map((p) =>
+            updatePlayerFields(room.roomId, p.playerId, {
+              canSpeak: room.settings.discussionMode === 'free',
+            }),
+          ),
+        )
+      },
+      hostMutePlayer: async (playerId: string, muted: boolean) => {
+        await updatePlayerFields(room.roomId, playerId, {
+          hostMuted: muted,
+          micEnabled: muted ? false : true,
+          isSpeaking: false,
+        })
       },
       muteAll: async (micEnabled: boolean) => {
         await Promise.all(
           players.map((p) =>
-            updatePlayerFields(room.roomId, p.playerId, { micEnabled }),
+            updatePlayerFields(room.roomId, p.playerId, {
+              micEnabled,
+              hostMuted: !micEnabled,
+              isSpeaking: false,
+            }),
           ),
         )
+      },
+      lockVoice: async (voiceLocked: boolean) => {
+        await updateRoomSettings(room.roomId, {
+          ...room.settings,
+          voiceLocked,
+        })
       },
       vote: async (targetId: string) => {
         if (!me) return

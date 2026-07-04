@@ -1,8 +1,10 @@
-import type { RoomSettings } from '@/types/game'
+import type { GamePreset, RoomSettings } from '@/types/game'
 
 export const DEFAULT_ROOM_SETTINGS: RoomSettings = {
   voiceEnabled: true,
   videoEnabled: false,
+  mediaMode: 'voice_only',
+  discussionMode: 'free',
   discussionTime: 90,
   votingTime: 45,
   nightTime: 60,
@@ -13,6 +15,61 @@ export const DEFAULT_ROOM_SETTINGS: RoomSettings = {
   includeJester: true,
   tieBreakMode: 'host',
   theme: 'dark',
+  anonymousMode: false,
+  spectatorVoiceEnabled: false,
+  forcePushToTalk: false,
+  voiceLocked: false,
+  narratorStyle: 'classic',
+  soundEnabled: true,
+  musicEnabled: true,
+  reducedMotion: false,
+  preset: 'custom',
+}
+
+export const GAME_PRESETS: Record<
+  Exclude<GamePreset, 'custom'>,
+  Partial<RoomSettings>
+> = {
+  beginner: {
+    preset: 'beginner',
+    discussionTime: 120,
+    votingTime: 60,
+    nightTime: 75,
+    includeJester: false,
+    includeGodfather: false,
+    autoMode: true,
+    discussionMode: 'moderated',
+  },
+  competitive: {
+    preset: 'competitive',
+    discussionTime: 90,
+    votingTime: 45,
+    nightTime: 50,
+    includeJester: true,
+    includeGodfather: true,
+    autoMode: true,
+    discussionMode: 'push_to_talk',
+    forcePushToTalk: true,
+  },
+  fast: {
+    preset: 'fast',
+    discussionTime: 45,
+    votingTime: 25,
+    nightTime: 35,
+    autoMode: true,
+    discussionMode: 'free',
+  },
+  chaos: {
+    preset: 'chaos',
+    discussionTime: 60,
+    votingTime: 30,
+    nightTime: 40,
+    includeJester: true,
+    includeGrandma: true,
+    includeGodfather: true,
+    anonymousMode: true,
+    discussionMode: 'free',
+  },
 }
 
 export const AVATARS = [

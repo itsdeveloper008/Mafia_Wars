@@ -35,18 +35,32 @@ export function PlayerCard({
         ? SignalLow
         : SignalZero
 
+  const speaking = player.isSpeaking && player.isAlive
+
   return (
     <motion.article
       layout
       initial={{ opacity: 0, scale: 0.96 }}
       animate={{ opacity: 1, scale: 1 }}
-      className={`relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-white/10 to-white/[0.02] p-4 shadow-lg backdrop-blur-md ${
-        !player.isAlive ? 'opacity-60' : ''
-      } ${compact ? 'p-3' : ''}`}
+      className={`relative overflow-hidden rounded-2xl border bg-gradient-to-br from-white/10 to-white/[0.02] p-4 shadow-lg backdrop-blur-md ${
+        speaking
+          ? 'border-cyan-glow shadow-[0_0_24px_rgba(34,211,238,0.35)]'
+          : 'border-white/10'
+      } ${!player.isAlive ? 'opacity-60' : ''} ${compact ? 'p-3' : ''}`}
     >
       <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-cyan-glow/10 blur-2xl" />
+      {speaking && (
+        <span className="absolute right-3 top-3 flex h-2.5 w-2.5">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan-glow opacity-75" />
+          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-cyan-glow" />
+        </span>
+      )}
       <div className="flex items-start gap-3">
-        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-navy-950/70 text-2xl ring-1 ring-white/10">
+        <div
+          className={`flex h-12 w-12 items-center justify-center rounded-2xl bg-navy-950/70 text-2xl ring-2 ${
+            speaking ? 'ring-cyan-glow animate-pulse' : 'ring-white/10'
+          }`}
+        >
           {player.avatar}
         </div>
         <div className="min-w-0 flex-1">

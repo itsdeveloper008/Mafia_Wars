@@ -33,9 +33,14 @@ export function HostDashboard({
   onAddTime,
   onMuteAll,
   onAckHand,
+  onGrantSpeak,
+  onClearSpeaker,
+  onHostMute,
+  onLockVoice,
   onBreakTie,
   onToggleVoice,
   onToggleVideo,
+  voiceConnection,
 }: {
   session: GameSession
   onPause: (paused: boolean) => void
@@ -44,14 +49,22 @@ export function HostDashboard({
   onAddTime: (sec: number) => void
   onMuteAll: (on: boolean) => void
   onAckHand: (id: string) => void
+  onGrantSpeak: (id: string) => void
+  onClearSpeaker: () => void
+  onHostMute: (id: string, muted: boolean) => void
+  onLockVoice: (locked: boolean) => void
   onBreakTie: (id: string) => void
   onToggleVoice: (on: boolean) => void
   onToggleVideo: (on: boolean) => void
+  voiceConnection?: string
 }) {
   const { room, state, players, secrets, votes, hostLogs } = session
   const roleById = Object.fromEntries(secrets.map((s) => [s.playerId, s.role]))
-  const raised = players.filter((p) => p.raisedHand)
+  const queue = room.speakingQueue ?? []
   const tieIds = state.pendingTiePlayerIds
+  const anon = room.settings.anonymousMode
+  const label = (p: (typeof players)[0], index: number) =>
+    anon ? `Player ${index + 1}` : p.displayName
 
   return (
     <ScreenShell>
@@ -103,13 +116,33 @@ export function HostDashboard({
               Player Grid
             </h2>
             <div className="grid gap-3 sm:grid-cols-2">
-              {players.map((p) => (
-                <PlayerCard
-                  key={p.playerId}
-                  player={p}
-                  role={roleById[p.playerId]}
-                  showRole
-                />
+              {players.map((p, i) => (
+                <div key={p.playerId} className="space-y-1">
+                  <PlayerCard
+                    player={{
+                      ...p,
+                      displayName: label(p, i),
+                    }}
+                    role={roleById[p.playerId]}
+                    showRole
+                  />
+                  <div className="flex gap-2 px-1">
+                    <button
+                      type="button"
+                      className="text-[11px] text-cyan-glow"
+                      onClick={() => onGrantSpeak(p.playerId)}
+                    >
+                      Give floor
+                    </button>
+                    <button
+                      type="button"
+                      className="text-[11px] text-rose-300"
+                      onClick={() => onHostMute(p.playerId, !p.hostMuted)}
+                    >
+                      {p.hostMuted ? 'Unmute' : 'Mute'}
+                    </button>
+                  </div>
+                </div>
               ))}
             </div>
           </section>
@@ -158,7 +191,17 @@ export function HostDashboard({
                   )}
                   Video
                 </GhostButton>
+                <GhostButton
+                  onClick={() => onLockVoice(!room.settings.voiceLocked)}
+                >
+                  {room.settings.voiceLocked ? 'Unlock Voice' : 'Lock Voice'}
+                </GhostButton>
+                <GhostButton onClick={onClearSpeaker}>Clear Floor</GhostButton>
               </div>
+              <p className="mt-2 font-mono text-[10px] uppercase tracking-wider text-slate-500">
+                Voice: {voiceConnection ?? 'idle'} · Mode:{' '}
+                {room.settings.discussionMode}
+              </p>
               <DangerButton className="mt-3 w-full" onClick={onEnd}>
                 <Flag className="h-4 w-4" /> End / Reset Lobby
               </DangerButton>
@@ -166,30 +209,41 @@ export function HostDashboard({
 
             <GlassPanel>
               <h2 className="mb-2 flex items-center gap-2 font-mono text-xs uppercase tracking-[0.18em] text-slate-400">
-                <Hand className="h-4 w-4" /> Raised Hands
+                <Hand className="h-4 w-4" /> Speaking Queue
               </h2>
-              {raised.length === 0 ? (
-                <p className="text-sm text-slate-500">No hands raised</p>
+              {room.currentSpeakerId && (
+                <p className="mb-2 rounded-lg bg-cyan-glow/10 px-3 py-2 text-sm text-cyan-100">
+                  Live:{' '}
+                  {players.find((p) => p.playerId === room.currentSpeakerId)
+                    ?.displayName ?? '—'}
+                </p>
+              )}
+              {queue.length === 0 ? (
+                <p className="text-sm text-slate-500">Queue empty</p>
               ) : (
-                <ul className="space-y-2">
-                  {raised.map((p) => (
-                    <li
-                      key={p.playerId}
-                      className="flex items-center justify-between rounded-xl bg-white/5 px-3 py-2 text-sm"
-                    >
-                      <span>
-                        {p.avatar} {p.displayName}
-                      </span>
-                      <button
-                        type="button"
-                        className="text-xs text-cyan-glow"
-                        onClick={() => onAckHand(p.playerId)}
+                <ol className="space-y-2">
+                  {queue.map((id, index) => {
+                    const p = players.find((x) => x.playerId === id)
+                    if (!p) return null
+                    return (
+                      <li
+                        key={id}
+                        className="flex items-center justify-between rounded-xl bg-white/5 px-3 py-2 text-sm"
                       >
-                        Acknowledge
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                        <span>
+                          {index + 1}. {p.avatar} {p.displayName}
+                        </span>
+                        <button
+                          type="button"
+                          className="text-xs text-cyan-glow"
+                          onClick={() => onGrantSpeak(id)}
+                        >
+                          Give floor
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ol>
               )}
             </GlassPanel>
 
