@@ -61,6 +61,11 @@ export async function createRoom(input: {
   return room
 }
 
+export async function getRoomById(roomId: string): Promise<RoomDoc | null> {
+  const snap = await getDoc(roomDoc(roomId))
+  return snap.exists() ? (snap.data() as RoomDoc) : null
+}
+
 export async function getRoomByCode(code: string): Promise<RoomDoc | null> {
   const idx = await getDoc(codeIndexDoc(code))
   if (!idx.exists()) {
@@ -69,8 +74,7 @@ export async function getRoomByCode(code: string): Promise<RoomDoc | null> {
     return direct.exists() ? (direct.data() as RoomDoc) : null
   }
   const roomId = idx.data().roomId as string
-  const snap = await getDoc(roomDoc(roomId))
-  return snap.exists() ? (snap.data() as RoomDoc) : null
+  return getRoomById(roomId)
 }
 
 export async function updateRoomSettings(

@@ -1,11 +1,13 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Mic } from 'lucide-react'
+import { Loader2, Mic } from 'lucide-react'
 import { useGameSession } from '@/hooks/useGameSession'
 import { useImmersion } from '@/hooks/useImmersion'
 import { useVoiceRoom } from '@/hooks/useVoiceRoom'
 import { SoundManager } from '@/services/audio/SoundManager'
+import { OfflineBanner } from '@/components/ui/OfflineBanner'
+import { ToastHost } from '@/components/ui/ToastHost'
 import { EntryScreen } from './EntryScreen'
 import { HostDashboard } from './HostDashboard'
 import { ImmersionLayer } from './immersive/ImmersionLayer'
@@ -18,8 +20,17 @@ type Screen = 'landing' | 'entry' | 'room'
 
 export default function GameApp() {
   const [screen, setScreen] = useState<Screen>('landing')
-  const { session, busy, error, setError, create, join, actions, isConfigured } =
-    useGameSession()
+  const {
+    session,
+    busy,
+    restoring,
+    error,
+    setError,
+    create,
+    join,
+    actions,
+    isConfigured,
+  } = useGameSession()
   const immersion = useImmersion(session)
   const voice = useVoiceRoom(session)
 
@@ -64,8 +75,23 @@ export default function GameApp() {
       session.room.settings.forcePushToTalk) &&
     session.state.status === 'discussion'
 
+  if (restoring) {
+    return (
+      <div className="mw-shell flex min-h-screen items-center justify-center">
+        <div className="mw-shell-bg" aria-hidden="true" />
+        <div className="relative z-10 flex items-center gap-3 text-mw-muted">
+          <Loader2 className="h-5 w-5 animate-spin text-mw-primary" />
+          Reconnecting…
+        </div>
+      </div>
+    )
+  }
+
   return (
     <>
+      <ToastHost />
+      <OfflineBanner />
+
       {screen === 'landing' && (
         <LandingScreen
           onContinue={() => {

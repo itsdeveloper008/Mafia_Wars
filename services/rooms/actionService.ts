@@ -64,12 +64,33 @@ export function subscribeVotes(
   })
 }
 
+/** Players may only read their own vote document under security rules. */
+export function subscribeMyVote(
+  roomId: string,
+  playerId: string,
+  onData: (vote: VoteDoc | null) => void,
+): Unsubscribe {
+  return onSnapshot(voteDoc(roomId, playerId), (snap) => {
+    onData(snap.exists() ? (snap.data() as VoteDoc) : null)
+  })
+}
+
 export function subscribeNightActions(
   roomId: string,
   onData: (actions: NightActionDoc[]) => void,
 ): Unsubscribe {
   return onSnapshot(nightActionsCol(roomId), (snap) => {
     onData(snap.docs.map((d) => d.data() as NightActionDoc))
+  })
+}
+
+export function subscribeMyNightAction(
+  roomId: string,
+  playerId: string,
+  onData: (action: NightActionDoc | null) => void,
+): Unsubscribe {
+  return onSnapshot(nightActionDoc(roomId, playerId), (snap) => {
+    onData(snap.exists() ? (snap.data() as NightActionDoc) : null)
   })
 }
 

@@ -60,7 +60,10 @@ export function HostDashboard({
 }) {
   const { room, state, players, secrets, votes, hostLogs } = session
   const roleById = Object.fromEntries(secrets.map((s) => [s.playerId, s.role]))
-  const queue = room.speakingQueue ?? []
+  const queue = players
+    .filter((p) => p.raisedHand)
+    .sort((a, b) => (a.raisedHandAt ?? 0) - (b.raisedHandAt ?? 0))
+    .map((p) => p.playerId)
   const tieIds = state.pendingTiePlayerIds
   const anon = room.settings.anonymousMode
   const label = (p: (typeof players)[0], index: number) =>

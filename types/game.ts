@@ -100,6 +100,7 @@ export interface PlayerDoc {
   isReady: boolean
   hasVoted: boolean
   raisedHand: boolean
+  raisedHandAt: number | null
   micEnabled: boolean
   cameraEnabled: boolean
   isHost: boolean

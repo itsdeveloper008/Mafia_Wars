@@ -32,9 +32,9 @@ service cloud.firestore {
         allow update: if isSelf(resource.data.uid) &&
           request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly([
-              'isReady', 'raisedHand', 'micEnabled', 'cameraEnabled',
+              'isReady', 'raisedHand', 'raisedHandAt', 'micEnabled', 'cameraEnabled',
               'notes', 'isConnected', 'connectionQuality', 'voteTarget', 'hasVoted',
-              'isSpeaking', 'canSpeak', 'pushToTalkHeld'
+              'isSpeaking', 'pushToTalkHeld'
             ]);
         allow update: if isHost(roomId);
         allow delete: if isHost(roomId) || isSelf(resource.data.uid);
