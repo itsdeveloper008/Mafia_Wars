@@ -784,6 +784,40 @@
   transform: translateX(5px);
 }
 
+.online-join-form {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr auto auto;
+  gap: 0.65rem;
+  margin: 0 0 1rem;
+  padding: 0.9rem;
+  border-radius: 16px;
+  background: rgba(15, 23, 42, 0.45);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.online-join-form input {
+  min-width: 0;
+}
+
+.online-join-form .online-btn {
+  min-height: 44px;
+  padding-inline: 1rem;
+  font-size: 0.9rem;
+}
+
+.online-error {
+  margin: 0 0 0.75rem;
+  text-align: center;
+  color: #fca5a5;
+  font-size: 0.9rem;
+}
+
+@media (max-width: 720px) {
+  .online-join-form {
+    grid-template-columns: 1fr;
+  }
+}
+
 .online-info-bar {
   display: flex;
   align-items: center;

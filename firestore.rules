@@ -1,0 +1,9 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Open rules for party play — tighten with Auth later.
+    match /rooms/{roomId} {
+      allow read, write: if true;
+    }
+  }
+}

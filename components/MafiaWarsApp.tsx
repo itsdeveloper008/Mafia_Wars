@@ -1,6 +1,16 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { isFirebaseConfigured } from '@/lib/firebase'
+import {
+  createRoom,
+  generateRoomCode,
+  getClientId,
+  joinRoom,
+  subscribeRoom,
+  updateRoom,
+  type RoomState,
+} from '@/lib/rooms'
 import './MafiaWarsApp.css'
 
 const cardBackImage = '/images/card-back.png'
@@ -75,10 +85,6 @@ function shuffle<T>(array: T[]): T[] {
   return copy
 }
 
-function generateRoomCode() {
-  return Math.random().toString(36).slice(2, 7).toUpperCase()
-}
-
 function MafiaWarsApp() {
   const [mode, setMode] = useState<Mode>('landing')
   const [playType, setPlayType] = useState<PlayType | null>(null)
@@ -95,6 +101,13 @@ function MafiaWarsApp() {
   const [pendingAvatar, setPendingAvatar] = useState('🕵️')
   const [autoAdvanceDone, setAutoAdvanceDone] = useState(false)
   const [generatedShareCode, setGeneratedShareCode] = useState<string>('')
+  const [activeRoomCode, setActiveRoomCode] = useState<string>('')
+  const [clientId, setClientId] = useState<string>('')
+  const [onlineBusy, setOnlineBusy] = useState(false)
+  const [onlineError, setOnlineError] = useState('')
+  const [showJoinForm, setShowJoinForm] = useState(false)
+  const [joinCodeInput, setJoinCodeInput] = useState('')
+  const skipHostSync = useRef(false)
   const [flippedCards, setFlippedCards] = useState<Record<string, boolean>>({})
   const [phase, setPhase] = useState<Phase>('night')
   const [nightStep, setNightStep] = useState<NightStep>('intro')
@@ -150,6 +163,117 @@ function MafiaWarsApp() {
   useEffect(() => {
     document.body.dataset.theme = theme
   }, [theme])
+
+  useEffect(() => {
+    setClientId(getClientId())
+    const params = new URLSearchParams(window.location.search)
+    const code = params.get('code')
+    if (code) {
+      setJoinCodeInput(code.toUpperCase())
+      setShowJoinForm(true)
+      setAutoAdvanceDone(true)
+      setMode('mode-select')
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!activeRoomCode || !isFirebaseConfigured()) return
+
+    const unsub = subscribeRoom(
+      activeRoomCode,
+      (room) => {
+        skipHostSync.current = true
+        applyRoomState(room)
+      },
+      (err) => {
+        setOnlineError(err.message)
+      },
+    )
+    return () => unsub()
+  }, [activeRoomCode])
+
+  useEffect(() => {
+    if (!activeRoomCode || !isHost || playType !== 'online') return
+    if (!isFirebaseConfigured()) return
+    if (skipHostSync.current) {
+      skipHostSync.current = false
+      return
+    }
+    if (mode === 'landing' || mode === 'mode-select') return
+
+    const timer = setTimeout(() => {
+      void updateRoom(activeRoomCode, {
+        mode: mode as RoomState['mode'],
+        roomName: roomConfig.roomName,
+        password: roomConfig.password,
+        includeGodfather: roomConfig.includeGodfather,
+        includeGrandmother: roomConfig.includeGrandmother,
+        settings,
+        players,
+        phase,
+        nightStep,
+        roundNumber,
+        winner,
+        events,
+        nightChoices,
+        doctorLastSavedId,
+        nominations,
+        defenseCandidateId,
+        defenseTimeLeft,
+        finalVotes,
+      }).catch((err: Error) => setOnlineError(err.message))
+    }, 250)
+
+    return () => clearTimeout(timer)
+  }, [
+    activeRoomCode,
+    isHost,
+    playType,
+    mode,
+    roomConfig,
+    settings,
+    players,
+    phase,
+    nightStep,
+    roundNumber,
+    winner,
+    events,
+    nightChoices,
+    doctorLastSavedId,
+    nominations,
+    defenseCandidateId,
+    defenseTimeLeft,
+    finalVotes,
+  ])
+
+  function applyRoomState(room: RoomState) {
+    setGeneratedShareCode(room.code)
+    setActiveRoomCode(room.code)
+    setIsHost(room.hostId === getClientId())
+    setPlayType('online')
+    setRoomConfig((prev) => ({
+      ...prev,
+      type: 'online',
+      roomName: room.roomName,
+      password: room.password,
+      includeGodfather: room.includeGodfather,
+      includeGrandmother: room.includeGrandmother,
+    }))
+    setSettings(room.settings)
+    setPlayers(room.players as Player[])
+    setPhase(room.phase)
+    setNightStep(room.nightStep)
+    setRoundNumber(room.roundNumber)
+    setWinner(room.winner)
+    setEvents(room.events as GameEvent[])
+    setNightChoices(room.nightChoices)
+    setDoctorLastSavedId(room.doctorLastSavedId)
+    setNominations(room.nominations)
+    setDefenseCandidateId(room.defenseCandidateId)
+    setDefenseTimeLeft(room.defenseTimeLeft)
+    setFinalVotes(room.finalVotes)
+    setMode(room.mode)
+  }
 
   useEffect(() => {
     const raw = localStorage.getItem('mafiaWars.history')
@@ -330,31 +454,122 @@ function MafiaWarsApp() {
     setMode('lobby')
   }
 
-  function handleSelectPlayType(type: PlayType, asHost = true) {
-    setPlayType(type)
-    setRoomConfig((prev) => ({ ...prev, type }))
-    setIsHost(asHost)
-    setMode('lobby')
+  function requireFirebase(): boolean {
+    if (isFirebaseConfigured()) return true
+    setOnlineError(
+      'Firebase is not configured yet. Add NEXT_PUBLIC_FIREBASE_* keys in .env.local and Vercel.',
+    )
+    alert(
+      'Firebase is not set up yet.\n\nAdd your Firebase keys to .env.local (local) and Vercel Environment Variables, then redeploy.',
+    )
+    return false
+  }
+
+  async function handleCreateOnlineRoom() {
+    if (!requireFirebase()) return
+    const name = pendingName.trim() || window.prompt('Your display name?')?.trim()
+    if (!name) return
+
+    setOnlineBusy(true)
+    setOnlineError('')
+    try {
+      const id = clientId || getClientId()
+      const code = generateRoomCode()
+      const hostPlayer: Player = {
+        id,
+        name,
+        alive: true,
+        avatar: pendingAvatar,
+        lastWill: '',
+      }
+      await createRoom({
+        code,
+        hostId: id,
+        hostPlayer,
+        roomName: roomConfig.roomName || `${name}'s Room`,
+        password: roomConfig.password,
+        settings,
+      })
+      skipHostSync.current = true
+      setClientId(id)
+      setActiveRoomCode(code)
+      setGeneratedShareCode(code)
+      setPlayers([hostPlayer])
+      setPlayType('online')
+      setIsHost(true)
+      setRoomConfig((prev) => ({
+        ...prev,
+        type: 'online',
+        roomName: prev.roomName || `${name}'s Room`,
+      }))
+      setPendingName('')
+      setShowJoinForm(false)
+      setMode('lobby')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not create room'
+      setOnlineError(message)
+      alert(message)
+    } finally {
+      setOnlineBusy(false)
+    }
+  }
+
+  async function handleJoinOnlineRoom() {
+    if (!requireFirebase()) return
+    const code = joinCodeInput.trim().toUpperCase()
+    const name = pendingName.trim()
+    if (!code || !name) {
+      alert('Enter your name and the room code.')
+      return
+    }
+
+    setOnlineBusy(true)
+    setOnlineError('')
+    try {
+      const id = clientId || getClientId()
+      const player: Player = {
+        id,
+        name,
+        alive: true,
+        avatar: pendingAvatar,
+        lastWill: '',
+      }
+      const room = await joinRoom(code, player)
+      skipHostSync.current = true
+      setClientId(id)
+      applyRoomState(room)
+      setPendingName('')
+      setJoinCodeInput('')
+      setShowJoinForm(false)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not join room'
+      setOnlineError(message)
+      alert(message)
+    } finally {
+      setOnlineBusy(false)
+    }
   }
 
   function handleGenerateShare() {
-    const code = generatedShareCode || generateRoomCode()
-    setGeneratedShareCode(code)
-    const url = `${window.location.origin}?room=${encodeURIComponent(
-      roomConfig.roomName || code,
-    )}&code=${code}`
+    const code = activeRoomCode || generatedShareCode
+    if (!code) {
+      alert('Create a room first to get a share code.')
+      return
+    }
+    const url = `${window.location.origin}?code=${code}`
+    const text = `Join my Mafia Wars room!\nCode: ${code}\n${url}`
     if (navigator.share) {
       navigator
         .share({
           title: 'Join my Mafia Wars room',
-          text: `Room: ${roomConfig.roomName || code}\nCode: ${code}`,
+          text,
           url,
         })
         .catch(() => {
           // ignore
         })
     } else {
-      navigator.clipboard.writeText(`Room: ${roomConfig.roomName || code}\nCode: ${code}\n${url}`)
+      void navigator.clipboard.writeText(text)
       alert('Share info copied to clipboard')
     }
   }
@@ -991,7 +1206,8 @@ function MafiaWarsApp() {
                 <button
                   type="button"
                   className="online-btn online-btn-create"
-                  onClick={() => handleSelectPlayType('online', true)}
+                  disabled={onlineBusy}
+                  onClick={() => void handleCreateOnlineRoom()}
                 >
                   <span className="online-btn-shine" aria-hidden="true" />
                   <svg
@@ -1007,13 +1223,17 @@ function MafiaWarsApp() {
                       strokeLinejoin="round"
                     />
                   </svg>
-                  Create a Room
+                  {onlineBusy ? 'Creating…' : 'Create a Room'}
                 </button>
 
                 <button
                   type="button"
                   className="online-btn online-btn-join"
-                  onClick={() => handleSelectPlayType('online', false)}
+                  disabled={onlineBusy}
+                  onClick={() => {
+                    setShowJoinForm((v) => !v)
+                    setOnlineError('')
+                  }}
                 >
                   Join with Code
                   <svg
@@ -1032,6 +1252,52 @@ function MafiaWarsApp() {
                   </svg>
                 </button>
               </div>
+
+              {showJoinForm && (
+                <div className="online-join-form">
+                  <input
+                    value={pendingName}
+                    onChange={(e) => setPendingName(e.target.value)}
+                    placeholder="Your name"
+                    aria-label="Your name"
+                  />
+                  <input
+                    value={joinCodeInput}
+                    onChange={(e) =>
+                      setJoinCodeInput(e.target.value.toUpperCase())
+                    }
+                    placeholder="Room code"
+                    aria-label="Room code"
+                    maxLength={8}
+                  />
+                  <select
+                    className="avatar-select"
+                    value={pendingAvatar}
+                    onChange={(e) => setPendingAvatar(e.target.value)}
+                    aria-label="Avatar"
+                  >
+                    {avatars.map((a) => (
+                      <option key={a} value={a}>
+                        {a}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="online-btn online-btn-create"
+                    disabled={onlineBusy}
+                    onClick={() => void handleJoinOnlineRoom()}
+                  >
+                    {onlineBusy ? 'Joining…' : 'Join Room'}
+                  </button>
+                </div>
+              )}
+
+              {onlineError && (
+                <p className="online-error" role="alert">
+                  {onlineError}
+                </p>
+              )}
 
               <footer className="online-info-bar" aria-label="Game requirements">
                 <div className="online-info-item">
@@ -1088,41 +1354,41 @@ function MafiaWarsApp() {
   }
 
   function renderRoomOptionsOnline() {
+    const code = activeRoomCode || generatedShareCode
     return (
       <div className="room-options">
         <h2>Online room</h2>
-        <div className="field-row">
-          <label>Suggest a room name</label>
-          <input
-            value={roomConfig.roomName}
-            onChange={(e) =>
-              setRoomConfig((prev) => ({ ...prev, roomName: e.target.value }))
-            }
-            placeholder="e.g. Friday Night Mafia"
-          />
-        </div>
-        <div className="field-row">
-          <label>Password / room code</label>
-          <input
-            value={roomConfig.password}
-            onChange={(e) =>
-              setRoomConfig((prev) => ({ ...prev, password: e.target.value }))
-            }
-            placeholder="Create a simple join code"
-          />
-        </div>
-        <button className="outline" onClick={handleGenerateShare}>
+        {code ? (
+          <p className="code-display">
+            Room code: <strong>{code}</strong>
+          </p>
+        ) : (
+          <p className="helper">Creating room…</p>
+        )}
+        {isHost && (
+          <div className="field-row">
+            <label>Room name</label>
+            <input
+              value={roomConfig.roomName}
+              onChange={(e) =>
+                setRoomConfig((prev) => ({ ...prev, roomName: e.target.value }))
+              }
+              placeholder="e.g. Friday Night Mafia"
+            />
+          </div>
+        )}
+        <button className="outline" onClick={handleGenerateShare} disabled={!code}>
           Share room
         </button>
-        {generatedShareCode && (
-          <p className="code-display">
-            Share this code: <strong>{generatedShareCode}</strong>
+        <p className="helper">
+          Friends tap Join with Code, enter this code and their name. Everyone
+          stays in sync live.
+        </p>
+        {onlineError && (
+          <p className="online-error" role="alert">
+            {onlineError}
           </p>
         )}
-        <p className="helper">
-          Other players join by entering the same room name and password on
-          their devices.
-        </p>
       </div>
     )
   }
@@ -1152,8 +1418,8 @@ function MafiaWarsApp() {
               <p className="subtitle">
                 {playType === 'online'
                   ? isHost
-                    ? 'You are the host. Add players then start the game.'
-                    : 'Waiting for the host to start the game.'
+                    ? 'You are the host. Share the room code, then start when everyone is in.'
+                    : 'Connected. Waiting for the host to start the game.'
                   : 'Add players and start when everyone is ready.'}
               </p>
             </div>
@@ -1174,47 +1440,66 @@ function MafiaWarsApp() {
           <div className="divider" />
 
           <div className="players-section">
-            <div className="field-row inline">
-              <input
-                value={pendingName}
-                onChange={(e) => setPendingName(e.target.value)}
-                placeholder="Add player name"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') addPlayer()
-                }}
-              />
-              <select
-                className="avatar-select"
-                value={pendingAvatar}
-                onChange={(e) => setPendingAvatar(e.target.value)}
-              >
-                {avatars.map((a) => (
-                  <option key={a} value={a}>
-                    {a}
-                  </option>
-                ))}
-              </select>
-              <button className="primary" onClick={addPlayer}>
-                Add
-              </button>
-            </div>
+            {playType !== 'online' && (
+              <div className="field-row inline">
+                <input
+                  value={pendingName}
+                  onChange={(e) => setPendingName(e.target.value)}
+                  placeholder="Add player name"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') addPlayer()
+                  }}
+                />
+                <select
+                  className="avatar-select"
+                  value={pendingAvatar}
+                  onChange={(e) => setPendingAvatar(e.target.value)}
+                >
+                  {avatars.map((a) => (
+                    <option key={a} value={a}>
+                      {a}
+                    </option>
+                  ))}
+                </select>
+                <button className="primary" onClick={addPlayer}>
+                  Add
+                </button>
+              </div>
+            )}
 
             <div className="players-list">
               {players.length === 0 ? (
-                <p className="helper">No players yet. Add at least 3 to begin.</p>
+                <p className="helper">
+                  {playType === 'online'
+                    ? 'Waiting for players to join with the room code…'
+                    : 'No players yet. Add at least 4 to begin.'}
+                </p>
               ) : (
                 players.map((p, idx) => (
                   <div key={p.id} className="player-pill">
                     <span className="avatar-circle small">
                       {p.avatar || idx + 1}
                     </span>
-                    <span className="name">{p.name}</span>
-                    <button
-                      className="ghost"
-                      onClick={() => removePlayer(p.id)}
-                    >
-                      ×
-                    </button>
+                    <span className="name">
+                      {p.name}
+                      {p.id === clientId ? ' (you)' : ''}
+                    </span>
+                    {isHost && playType === 'online' && p.id !== clientId && (
+                      <button
+                        className="ghost"
+                        onClick={() => removePlayer(p.id)}
+                      >
+                        ×
+                      </button>
+                    )}
+                    {playType !== 'online' && (
+                      <button
+                        className="ghost"
+                        onClick={() => removePlayer(p.id)}
+                      >
+                        ×
+                      </button>
+                    )}
                   </div>
                 ))
               )}
@@ -1229,7 +1514,7 @@ function MafiaWarsApp() {
                 <input
                   type="checkbox"
                   checked={roomConfig.includeGodfather && canToggle}
-                  disabled={!canToggle}
+                  disabled={!canToggle || (playType === 'online' && !isHost)}
                   onChange={(e) =>
                     setRoomConfig((prev) => ({
                       ...prev,
@@ -1243,7 +1528,7 @@ function MafiaWarsApp() {
                 <input
                   type="checkbox"
                   checked={roomConfig.includeGrandmother && canToggle}
-                  disabled={!canToggle}
+                  disabled={!canToggle || (playType === 'online' && !isHost)}
                   onChange={(e) =>
                     setRoomConfig((prev) => ({
                       ...prev,
@@ -1261,18 +1546,24 @@ function MafiaWarsApp() {
               )}
             </div>
 
-            <button
-              className="primary large"
-              disabled={!minPlayersSatisfied}
-              onClick={startGame}
-            >
-              Start game
-            </button>
+            {playType === 'online' && !isHost ? (
+              <p className="helper">Waiting for host to start…</p>
+            ) : (
+              <button
+                className="primary large"
+                disabled={!minPlayersSatisfied}
+                onClick={startGame}
+              >
+                Start game
+              </button>
+            )}
           </div>
           <div className="settings-row">
-            <button className="secondary" onClick={() => setShowSettings((v) => !v)}>
-              Game settings
-            </button>
+            {(playType !== 'online' || isHost) && (
+              <button className="secondary" onClick={() => setShowSettings((v) => !v)}>
+                Game settings
+              </button>
+            )}
             <button className="outline" onClick={() => setShowHowToPlay(true)}>
               How to play
             </button>
