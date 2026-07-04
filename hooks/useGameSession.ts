@@ -89,7 +89,10 @@ export function useGameSession() {
       setRestoring(false)
       return
     }
-    return watchAuth((user) => setUid(user?.uid ?? ''))
+    // Only adopt Firebase auth uid when present — never wipe local fallback uid
+    return watchAuth((user) => {
+      if (user?.uid) setUid(user.uid)
+    })
   }, [])
 
   // Auth + session recovery after refresh

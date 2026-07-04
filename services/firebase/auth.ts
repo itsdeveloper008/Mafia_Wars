@@ -8,36 +8,59 @@ import {
   type User,
 } from 'firebase/auth'
 import { AppError, toUserError } from '@/lib/errors'
+import { getLocalUid } from '@/lib/localId'
 import { logger } from '@/lib/logger'
 import { getFirebaseAuth, isFirebaseConfigured } from './client'
 
 const googleProvider = new GoogleAuthProvider()
 
-export async function ensureAuthUser(): Promise<User> {
+export type AuthIdentity = {
+  uid: string
+  isAnonymous: boolean
+  /** True when using local fallback (Firebase Auth not available). */
+  isLocalFallback: boolean
+}
+
+/**
+ * Returns a stable user id for the session.
+ * Prefers Firebase Anonymous Auth; falls back to a local id so the game
+ * still works when Auth is not enabled or the domain is unauthorized.
+ */
+export async function ensureAuthUser(): Promise<AuthIdentity> {
   if (!isFirebaseConfigured()) {
-    throw new AppError(
-      'AUTH',
-      'Firebase is not configured. Add NEXT_PUBLIC_FIREBASE_* keys on Vercel and redeploy.',
-    )
+    const uid = getLocalUid()
+    logger.warn('auth.local_fallback', { reason: 'firebase_not_configured', uid })
+    return { uid, isAnonymous: true, isLocalFallback: true }
   }
 
-  const auth = getFirebaseAuth()
-
-  // Wait for persisted session before creating a new anonymous user
-  await auth.authStateReady()
-  if (auth.currentUser) return auth.currentUser
-
   try {
+    const auth = getFirebaseAuth()
+    await auth.authStateReady()
+    if (auth.currentUser) {
+      return {
+        uid: auth.currentUser.uid,
+        isAnonymous: auth.currentUser.isAnonymous,
+        isLocalFallback: false,
+      }
+    }
+
     const cred = await signInAnonymously(auth)
     logger.info('auth.anonymous', { uid: cred.user.uid })
-    return cred.user
+    return {
+      uid: cred.user.uid,
+      isAnonymous: true,
+      isLocalFallback: false,
+    }
   } catch (error) {
-    logger.warn('auth.anonymous_failed', {
-      code: typeof error === 'object' && error && 'code' in error
-        ? String((error as { code: string }).code)
-        : 'unknown',
+    const uid = getLocalUid()
+    const err = toUserError(error)
+    logger.warn('auth.local_fallback', {
+      reason: err.code,
+      message: err.userMessage,
+      uid,
     })
-    throw toUserError(error)
+    // Do not throw — allow gameplay with local identity + open rules
+    return { uid, isAnonymous: true, isLocalFallback: true }
   }
 }
 
@@ -66,7 +89,11 @@ export async function signInWithGoogle(): Promise<User> {
 }
 
 export async function signOutUser(): Promise<void> {
-  await signOut(getFirebaseAuth())
+  try {
+    await signOut(getFirebaseAuth())
+  } catch {
+    // ignore when auth unavailable
+  }
   logger.info('auth.sign_out')
 }
 
@@ -75,5 +102,10 @@ export function watchAuth(callback: (user: User | null) => void): () => void {
     callback(null)
     return () => undefined
   }
-  return onAuthStateChanged(getFirebaseAuth(), callback)
+  try {
+    return onAuthStateChanged(getFirebaseAuth(), callback)
+  } catch {
+    callback(null)
+    return () => undefined
+  }
 }

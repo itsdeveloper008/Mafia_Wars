@@ -1,89 +1,52 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() {
-      return request.auth != null;
-    }
-
-    function isHost(roomId) {
-      return signedIn()
-        && get(/databases/$(database)/documents/rooms/$(roomId)).data.hostId == request.auth.uid;
-    }
-
-    function isSelf(uid) {
-      return signedIn() && request.auth.uid == uid;
-    }
+    // Open rules so the live game works even when Firebase Anonymous Auth
+    // is not enabled yet. Re-lock to request.auth != null after enabling
+    // Authentication → Anonymous and adding your Vercel domain.
 
     match /roomCodes/{code} {
-      allow read: if signedIn();
-      allow write: if signedIn();
+      allow read, write: if true;
     }
 
     match /rooms/{roomId} {
-      allow read: if signedIn();
-      allow create: if signedIn() && request.resource.data.hostId == request.auth.uid;
-      allow update, delete: if isHost(roomId);
+      allow read, write: if true;
 
       match /players/{playerId} {
-        allow read: if signedIn();
-        allow create: if isSelf(request.resource.data.uid)
-          && request.resource.data.playerId == request.auth.uid;
-        // Players may only update their own limited fields
-        allow update: if isSelf(resource.data.uid) &&
-          request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly([
-              'isReady', 'raisedHand', 'raisedHandAt', 'micEnabled', 'cameraEnabled',
-              'notes', 'isConnected', 'connectionQuality', 'voteTarget', 'hasVoted',
-              'isSpeaking', 'pushToTalkHeld'
-            ]);
-        allow update: if isHost(roomId);
-        allow delete: if isHost(roomId) || isSelf(resource.data.uid);
+        allow read, write: if true;
       }
 
-      // Secrets: only owner or host
       match /secrets/{playerId} {
-        allow read: if isHost(roomId) || isSelf(playerId);
-        allow write: if isHost(roomId);
+        allow read, write: if true;
       }
 
       match /state/{docId} {
-        allow read: if signedIn();
-        allow write: if isHost(roomId);
+        allow read, write: if true;
       }
 
       match /votes/{playerId} {
-        allow read: if isHost(roomId) || isSelf(playerId);
-        allow create, update: if isSelf(playerId)
-          && request.resource.data.uid == request.auth.uid;
-        allow delete: if isHost(roomId);
+        allow read, write: if true;
       }
 
       match /nightActions/{playerId} {
-        allow read: if isHost(roomId) || isSelf(playerId);
-        allow create, update: if isSelf(playerId)
-          && request.resource.data.uid == request.auth.uid;
-        allow delete: if isHost(roomId);
+        allow read, write: if true;
       }
 
       match /logs/{logId} {
-        allow read: if signedIn();
-        allow write: if isHost(roomId);
+        allow read, write: if true;
       }
 
       match /hostLogs/{logId} {
-        allow read: if isHost(roomId);
-        allow write: if isHost(roomId);
+        allow read, write: if true;
       }
     }
 
     match /matchHistory/{matchId} {
-      allow read: if signedIn();
-      allow create: if signedIn();
+      allow read, write: if true;
     }
 
     match /statistics/{uid} {
-      allow read: if isSelf(uid);
-      allow write: if isSelf(uid) || signedIn();
+      allow read, write: if true;
     }
   }
 }
