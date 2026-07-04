@@ -2,19 +2,18 @@
 
 import {
   FastForward,
+  Flag,
   Hand,
+  Mic,
+  MicOff,
   Pause,
   Play,
   SkipForward,
   TimerReset,
-  MicOff,
-  Mic,
   Video,
   VideoOff,
-  Flag,
 } from 'lucide-react'
-import { makeEvent } from '@/lib/game/engine'
-import type { RoomState } from '@/lib/game/types'
+import type { GameSession } from '@/types/game'
 import { PlayerCard } from './PlayerCard'
 import {
   Countdown,
@@ -27,32 +26,32 @@ import {
 } from './ui'
 
 export function HostDashboard({
-  room,
-  onPatch,
-  onSkipPhase,
-  onEndGame,
+  session,
+  onPause,
+  onSkip,
+  onEnd,
+  onAddTime,
+  onMuteAll,
+  onAckHand,
+  onBreakTie,
+  onToggleVoice,
+  onToggleVideo,
 }: {
-  room: RoomState
-  onPatch: (patch: Partial<RoomState>) => Promise<void>
-  onSkipPhase: () => void
-  onEndGame: () => void
+  session: GameSession
+  onPause: (paused: boolean) => void
+  onSkip: () => void
+  onEnd: () => void
+  onAddTime: (sec: number) => void
+  onMuteAll: (on: boolean) => void
+  onAckHand: (id: string) => void
+  onBreakTie: (id: string) => void
+  onToggleVoice: (on: boolean) => void
+  onToggleVideo: (on: boolean) => void
 }) {
-  const raised = room.players.filter((p) => p.handRaised)
-
-  async function addDiscussion(seconds: number) {
-    if (room.phase !== 'discussion' || !room.phaseEndsAt) return
-    await onPatch({
-      phaseEndsAt: room.phaseEndsAt + seconds * 1000,
-      settings: {
-        ...room.settings,
-        discussionSec: room.settings.discussionSec + seconds,
-      },
-      hostEvents: [
-        ...room.hostEvents,
-        makeEvent(room.round, 'discussion', `Host added +${seconds}s.`),
-      ],
-    })
-  }
+  const { room, state, players, secrets, votes, hostLogs } = session
+  const roleById = Object.fromEntries(secrets.map((s) => [s.playerId, s.role]))
+  const raised = players.filter((p) => p.raisedHand)
+  const tieIds = state.pendingTiePlayerIds
 
   return (
     <ScreenShell>
@@ -60,21 +59,43 @@ export function HostDashboard({
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="font-mono text-xs uppercase tracking-[0.2em] text-amber-glow">
-              Game Master Control
+              Game Master Control · {room.settings.autoMode ? 'Auto' : 'Manual'}
             </p>
             <h1 className="text-3xl font-bold text-white">Host Dashboard</h1>
             <p className="text-sm text-slate-400">
-              Room {room.code} · Round {room.round} · You are not a player
+              Room {room.roomCode} · Round {state.currentRound} · You are not a
+              player
             </p>
           </div>
           <GlassPanel className="min-w-[220px] text-center !py-4">
             <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-slate-400">
-              {room.paused ? 'Paused' : room.phase}
-              {room.phase === 'night' ? ` · ${room.nightStep}` : ''}
+              {room.paused ? 'Paused' : state.status}
             </p>
-            <Countdown endsAt={room.phaseEndsAt} paused={room.paused} />
+            <Countdown
+              timerStartedAt={state.timerStartedAt}
+              timerDurationMs={state.timerDurationMs}
+              paused={room.paused}
+            />
           </GlassPanel>
         </header>
+
+        {tieIds.length > 0 && (
+          <GlassPanel>
+            <p className="mb-2 text-sm text-amber-200">
+              Vote tied — choose who is eliminated:
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {tieIds.map((id) => {
+                const p = players.find((x) => x.playerId === id)
+                return (
+                  <PrimaryButton key={id} onClick={() => onBreakTie(id)}>
+                    {p?.displayName ?? id}
+                  </PrimaryButton>
+                )
+              })}
+            </div>
+          </GlassPanel>
+        )}
 
         <div className="grid gap-4 xl:grid-cols-[1.3fr_1fr_1fr]">
           <section className="space-y-3">
@@ -82,8 +103,13 @@ export function HostDashboard({
               Player Grid
             </h2>
             <div className="grid gap-3 sm:grid-cols-2">
-              {room.players.map((p) => (
-                <PlayerCard key={p.id} player={p} showRole isHostView />
+              {players.map((p) => (
+                <PlayerCard
+                  key={p.playerId}
+                  player={p}
+                  role={roleById[p.playerId]}
+                  showRole
+                />
               ))}
             </div>
           </section>
@@ -94,9 +120,7 @@ export function HostDashboard({
                 Host Controls
               </h2>
               <div className="mt-3 grid grid-cols-2 gap-2">
-                <GhostButton
-                  onClick={() => void onPatch({ paused: !room.paused })}
-                >
+                <GhostButton onClick={() => onPause(!room.paused)}>
                   {room.paused ? (
                     <Play className="h-4 w-4" />
                   ) : (
@@ -104,48 +128,28 @@ export function HostDashboard({
                   )}
                   {room.paused ? 'Resume' : 'Pause'}
                 </GhostButton>
-                <GhostButton onClick={onSkipPhase}>
+                <GhostButton onClick={onSkip}>
                   <SkipForward className="h-4 w-4" /> Skip Phase
                 </GhostButton>
-                <GhostButton onClick={() => void addDiscussion(30)}>
+                <GhostButton onClick={() => onAddTime(30)}>
                   <TimerReset className="h-4 w-4" /> +30s
                 </GhostButton>
-                <GhostButton onClick={() => void addDiscussion(60)}>
+                <GhostButton onClick={() => onAddTime(60)}>
                   <FastForward className="h-4 w-4" /> +1m
                 </GhostButton>
-                <GhostButton
-                  onClick={() =>
-                    void onPatch({
-                      players: room.players.map((p) => ({ ...p, micOn: false })),
-                    })
-                  }
-                >
+                <GhostButton onClick={() => onMuteAll(false)}>
                   <MicOff className="h-4 w-4" /> Mute All
                 </GhostButton>
-                <GhostButton
-                  onClick={() =>
-                    void onPatch({
-                      players: room.players.map((p) => ({ ...p, micOn: true })),
-                    })
-                  }
-                >
+                <GhostButton onClick={() => onMuteAll(true)}>
                   <Mic className="h-4 w-4" /> Unmute
                 </GhostButton>
                 <GhostButton
-                  onClick={() =>
-                    void onPatch({
-                      settings: { ...room.settings, voiceEnabled: true },
-                    })
-                  }
+                  onClick={() => onToggleVoice(!room.settings.voiceEnabled)}
                 >
-                  <Mic className="h-4 w-4" /> Voice On
+                  <Mic className="h-4 w-4" /> Voice
                 </GhostButton>
                 <GhostButton
-                  onClick={() =>
-                    void onPatch({
-                      settings: { ...room.settings, videoEnabled: !room.settings.videoEnabled },
-                    })
-                  }
+                  onClick={() => onToggleVideo(!room.settings.videoEnabled)}
                 >
                   {room.settings.videoEnabled ? (
                     <Video className="h-4 w-4" />
@@ -155,8 +159,8 @@ export function HostDashboard({
                   Video
                 </GhostButton>
               </div>
-              <DangerButton className="mt-3 w-full" onClick={onEndGame}>
-                <Flag className="h-4 w-4" /> End Game
+              <DangerButton className="mt-3 w-full" onClick={onEnd}>
+                <Flag className="h-4 w-4" /> End / Reset Lobby
               </DangerButton>
             </GlassPanel>
 
@@ -170,22 +174,16 @@ export function HostDashboard({
                 <ul className="space-y-2">
                   {raised.map((p) => (
                     <li
-                      key={p.id}
+                      key={p.playerId}
                       className="flex items-center justify-between rounded-xl bg-white/5 px-3 py-2 text-sm"
                     >
                       <span>
-                        {p.avatar} {p.name}
+                        {p.avatar} {p.displayName}
                       </span>
                       <button
                         type="button"
                         className="text-xs text-cyan-glow"
-                        onClick={() =>
-                          void onPatch({
-                            players: room.players.map((x) =>
-                              x.id === p.id ? { ...x, handRaised: false } : x,
-                            ),
-                          })
-                        }
+                        onClick={() => onAckHand(p.playerId)}
                       >
                         Acknowledge
                       </button>
@@ -200,10 +198,12 @@ export function HostDashboard({
                 Roles
               </h2>
               <ul className="mt-2 space-y-1 text-sm text-slate-200">
-                {room.players.map((p) => (
-                  <li key={p.id} className="flex justify-between gap-2">
-                    <span>{p.name}</span>
-                    <span className="font-mono text-amber-glow">{p.role}</span>
+                {players.map((p) => (
+                  <li key={p.playerId} className="flex justify-between gap-2">
+                    <span>{p.displayName}</span>
+                    <span className="font-mono text-amber-glow">
+                      {roleById[p.playerId] ?? '—'}
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -216,7 +216,7 @@ export function HostDashboard({
                 Host Event Log
               </h2>
               <ul className="mt-3 space-y-2 text-sm text-slate-300">
-                {[...room.hostEvents].reverse().slice(0, 40).map((e) => (
+                {[...hostLogs].reverse().slice(0, 40).map((e) => (
                   <li key={e.id} className="border-b border-white/5 pb-2">
                     <span className="font-mono text-[10px] text-slate-500">
                       R{e.round} {e.phase}
@@ -232,27 +232,35 @@ export function HostDashboard({
                 Votes
               </h2>
               <ul className="mt-2 space-y-1 text-sm">
-                {room.players
-                  .filter((p) => p.alive)
-                  .map((p) => (
-                    <li key={p.id} className="flex justify-between text-slate-300">
-                      <span>{p.name}</span>
-                      <span className="font-mono text-cyan-glow">
-                        {room.votes[p.id]
-                          ? room.votes[p.id] === 'abstain'
-                            ? 'Abstain'
-                            : room.players.find((x) => x.id === room.votes[p.id])
-                                ?.name ?? room.votes[p.id]
-                          : '—'}
-                      </span>
-                    </li>
-                  ))}
+                {players
+                  .filter((p) => p.isAlive)
+                  .map((p) => {
+                    const v = votes[p.playerId]
+                    const targetName =
+                      !v || v.targetId === 'abstain'
+                        ? v?.targetId === 'abstain'
+                          ? 'Abstain'
+                          : '—'
+                        : players.find((x) => x.playerId === v.targetId)
+                            ?.displayName ?? v.targetId
+                    return (
+                      <li
+                        key={p.playerId}
+                        className="flex justify-between text-slate-300"
+                      >
+                        <span>{p.displayName}</span>
+                        <span className="font-mono text-cyan-glow">
+                          {targetName}
+                        </span>
+                      </li>
+                    )
+                  })}
               </ul>
             </GlassPanel>
 
-            {room.morningMessage && (
+            {state.morningMessage && (
               <GlassPanel>
-                <p className="text-sm text-slate-200">{room.morningMessage}</p>
+                <p className="text-sm text-slate-200">{state.morningMessage}</p>
               </GlassPanel>
             )}
           </section>

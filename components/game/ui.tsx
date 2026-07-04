@@ -127,27 +127,33 @@ export function FadeIn({
 }
 
 export function Countdown({
-  endsAt,
+  timerStartedAt,
+  timerDurationMs,
   paused,
 }: {
-  endsAt: number | null
+  timerStartedAt: number | null
+  timerDurationMs: number
   paused?: boolean
 }) {
   const [left, setLeft] = useState(0)
 
   useEffect(() => {
-    if (!endsAt) {
+    if (!timerStartedAt || timerDurationMs <= 0) {
       setLeft(0)
       return
     }
     const tick = () => {
-      if (paused) return
+      if (paused) {
+        setLeft(Math.ceil(timerDurationMs / 1000))
+        return
+      }
+      const endsAt = timerStartedAt + timerDurationMs
       setLeft(Math.max(0, Math.ceil((endsAt - Date.now()) / 1000)))
     }
     tick()
     const id = setInterval(tick, 250)
     return () => clearInterval(id)
-  }, [endsAt, paused])
+  }, [timerStartedAt, timerDurationMs, paused])
 
   const mm = String(Math.floor(left / 60)).padStart(2, '0')
   const ss = String(left % 60).padStart(2, '0')

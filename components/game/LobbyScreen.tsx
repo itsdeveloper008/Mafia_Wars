@@ -1,6 +1,7 @@
 'use client'
 
 import {
+  CheckCircle2,
   Copy,
   Mic,
   MicOff,
@@ -8,9 +9,8 @@ import {
   Share2,
   Video,
   VideoOff,
-  CheckCircle2,
 } from 'lucide-react'
-import type { GameSettings, Player, RoomState } from '@/lib/game/types'
+import type { GameSession, RoomSettings } from '@/types/game'
 import { HostBadge, PlayerCard } from './PlayerCard'
 import {
   FadeIn,
@@ -21,10 +21,7 @@ import {
 } from './ui'
 
 export function LobbyScreen({
-  room,
-  isHost,
-  me,
-  clientId,
+  session,
   busy,
   error,
   onUpdateSettings,
@@ -33,30 +30,30 @@ export function LobbyScreen({
   onToggleCamera,
   onKick,
   onStart,
+  onToggleAutoMode,
 }: {
-  room: RoomState
-  isHost: boolean
-  me?: Player
-  clientId: string
+  session: GameSession
   busy: boolean
   error: string
-  onUpdateSettings: (s: GameSettings) => void
+  onUpdateSettings: (s: RoomSettings) => void
   onToggleReady: () => void
   onToggleMic: () => void
   onToggleCamera: () => void
   onKick: (id: string) => void
   onStart: () => void
+  onToggleAutoMode: (auto: boolean) => void
 }) {
+  const { room, players, isHost, me } = session
   const s = room.settings
-  const readyCount = room.players.filter((p) => p.ready).length
+  const readyCount = players.filter((p) => p.isReady).length
 
   async function copyCode() {
-    await navigator.clipboard.writeText(room.code)
+    await navigator.clipboard.writeText(room.roomCode)
   }
 
   async function share() {
-    const url = `${window.location.origin}?code=${room.code}`
-    const text = `Join my Mafia Wars room!\nCode: ${room.code}\n${url}`
+    const url = `${window.location.origin}?code=${room.roomCode}`
+    const text = `Join my Mafia Wars room!\nCode: ${room.roomCode}\n${url}`
     if (navigator.share) {
       await navigator.share({ title: 'Mafia Wars', text, url }).catch(() => undefined)
     } else {
@@ -76,7 +73,7 @@ export function LobbyScreen({
             <div className="mt-2 flex flex-wrap items-center gap-2">
               {isHost ? <HostBadge /> : null}
               <span className="rounded-full bg-white/5 px-3 py-1 font-mono text-xs text-slate-300">
-                {room.players.length}/12 players · {readyCount} ready
+                {players.length}/{s.maxPlayers} players · {readyCount} ready
               </span>
             </div>
           </div>
@@ -86,7 +83,7 @@ export function LobbyScreen({
               Room Code
             </p>
             <p className="mt-1 font-mono text-4xl font-bold tracking-[0.2em] text-white">
-              {room.code}
+              {room.roomCode}
             </p>
             <div className="mt-3 flex gap-2">
               <GhostButton className="flex-1 py-2" onClick={() => void copyCode()}>
@@ -104,7 +101,7 @@ export function LobbyScreen({
             <h2 className="font-mono text-xs uppercase tracking-[0.18em] text-slate-400">
               Players
             </h2>
-            {room.players.length === 0 ? (
+            {players.length === 0 ? (
               <GlassPanel>
                 <p className="text-sm text-slate-400">
                   Waiting for players to join with the room code…
@@ -112,17 +109,13 @@ export function LobbyScreen({
               </GlassPanel>
             ) : (
               <div className="grid gap-3 sm:grid-cols-2">
-                {room.players.map((p) => (
-                  <div key={p.id} className="relative">
-                    <PlayerCard
-                      player={p}
-                      isYou={p.id === clientId}
-                      isHostView={isHost}
-                    />
+                {players.map((p) => (
+                  <div key={p.playerId} className="relative">
+                    <PlayerCard player={p} isYou={p.uid === session.uid} />
                     {isHost && (
                       <button
                         type="button"
-                        onClick={() => onKick(p.id)}
+                        onClick={() => onKick(p.playerId)}
                         className="absolute right-3 top-3 text-xs text-rose-300 hover:text-rose-200"
                       >
                         Kick
@@ -137,14 +130,18 @@ export function LobbyScreen({
               <GlassPanel className="flex flex-wrap gap-2">
                 <GhostButton onClick={onToggleReady}>
                   <CheckCircle2 className="h-4 w-4" />
-                  {me.ready ? 'Unready' : 'Ready Up'}
+                  {me.isReady ? 'Unready' : 'Ready Up'}
                 </GhostButton>
                 <GhostButton onClick={onToggleMic}>
-                  {me.micOn ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
+                  {me.micEnabled ? (
+                    <Mic className="h-4 w-4" />
+                  ) : (
+                    <MicOff className="h-4 w-4" />
+                  )}
                   Mic
                 </GhostButton>
                 <GhostButton onClick={onToggleCamera}>
-                  {me.cameraOn ? (
+                  {me.cameraEnabled ? (
                     <Video className="h-4 w-4" />
                   ) : (
                     <VideoOff className="h-4 w-4" />
@@ -163,21 +160,27 @@ export function LobbyScreen({
               <div className="mt-4 space-y-3">
                 <TimerField
                   label="Discussion (sec)"
-                  value={s.discussionSec}
+                  value={s.discussionTime}
                   disabled={!isHost}
-                  onChange={(v) => onUpdateSettings({ ...s, discussionSec: v })}
+                  onChange={(v) => onUpdateSettings({ ...s, discussionTime: v })}
                 />
                 <TimerField
                   label="Voting (sec)"
-                  value={s.votingSec}
+                  value={s.votingTime}
                   disabled={!isHost}
-                  onChange={(v) => onUpdateSettings({ ...s, votingSec: v })}
+                  onChange={(v) => onUpdateSettings({ ...s, votingTime: v })}
                 />
                 <TimerField
-                  label="Night step (sec)"
-                  value={s.nightSec}
+                  label="Night (sec)"
+                  value={s.nightTime}
                   disabled={!isHost}
-                  onChange={(v) => onUpdateSettings({ ...s, nightSec: v })}
+                  onChange={(v) => onUpdateSettings({ ...s, nightTime: v })}
+                />
+                <Toggle
+                  label="Auto Mode"
+                  checked={s.autoMode}
+                  disabled={!isHost}
+                  onChange={onToggleAutoMode}
                 />
                 <Toggle
                   label="Voice channel"
@@ -217,7 +220,7 @@ export function LobbyScreen({
             {isHost ? (
               <PrimaryButton
                 className="w-full py-4 text-base"
-                disabled={busy || room.players.length < 4}
+                disabled={busy || players.length < 4}
                 onClick={onStart}
               >
                 <Play className="h-5 w-5" />
@@ -226,8 +229,7 @@ export function LobbyScreen({
             ) : (
               <GlassPanel>
                 <p className="text-sm text-slate-300">
-                  You are a player. Ready up and wait for the Game Master to
-                  start.
+                  You are a player. Ready up and wait for the Game Master.
                 </p>
               </GlassPanel>
             )}

@@ -1,9 +1,9 @@
 'use client'
 
 import { Hand, Mic, MicOff, Video, VideoOff } from 'lucide-react'
-import { isMafiaTeam } from '@/lib/game/roles'
-import type { NightActions, Player, RoomState } from '@/lib/game/types'
-import { ROLE_INFO } from '@/lib/game/types'
+import { isMafiaTeam } from '@/constants/roles'
+import { ROLE_INFO } from '@/constants/roles'
+import type { GameSession, PlayerDoc } from '@/types/game'
 import { PlayerCard } from './PlayerCard'
 import {
   Countdown,
@@ -15,18 +15,23 @@ import {
 } from './ui'
 
 export function PlayerGameView({
-  room,
-  me,
-  onPatchPlayer,
-  onNightAction,
+  session,
+  onToggleHand,
+  onToggleMic,
+  onToggleCamera,
   onVote,
+  onNightAction,
 }: {
-  room: RoomState
-  me?: Player
-  onPatchPlayer: (partial: Partial<Player>) => Promise<void>
-  onNightAction: (actions: Partial<NightActions>) => Promise<void>
-  onVote: (targetId: string) => Promise<void>
+  session: GameSession
+  onToggleHand: () => void
+  onToggleMic: () => void
+  onToggleCamera: () => void
+  onVote: (id: string) => void
+  onNightAction: (id: string) => void
 }) {
+  const { room, state, players, me, mySecret, votes, nightActions, publicLogs } =
+    session
+
   if (!me) {
     return (
       <ScreenShell>
@@ -37,30 +42,42 @@ export function PlayerGameView({
     )
   }
 
-  const alive = room.players.filter((p) => p.alive)
-  const dead = room.players.filter((p) => !p.alive)
-  const role = me.role
+  const alive = players.filter((p) => p.isAlive)
+  const dead = players.filter((p) => !p.isAlive)
+  const role = mySecret?.role
   const info = role ? ROLE_INFO[role] : null
-  const privateLog = room.privateLogs[me.id] ?? []
-  const mafiaAlive = room.players.filter(
-    (p) => p.alive && isMafiaTeam(p.role),
-  )
-  const isNight = room.phase === 'night'
-  const nightDim = isNight
+  const privateLog = mySecret?.privateLogs ?? []
+  const isNight = state.status === 'night'
+  const myVote = votes[me.playerId]
+  const myNight = nightActions[me.playerId]
+
+  // Mafia circle: only show names of other mafia if we know our role is mafia
+  // We don't have other roles on client — only show "your crew is active"
+  const canActAtNight =
+    me.isAlive &&
+    isNight &&
+    role &&
+    (role === 'Doctor' ||
+      role === 'Detective' ||
+      role === 'Mafia' ||
+      role === 'Godfather')
 
   return (
     <ScreenShell>
-      <FadeIn className={`space-y-5 ${nightDim ? 'brightness-90' : ''}`}>
+      <FadeIn className={`space-y-5 ${isNight ? 'brightness-90' : ''}`}>
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="font-mono text-xs uppercase tracking-[0.2em] text-cyan-glow">
-              Round {room.round} · {room.phase}
-              {isNight ? ` · ${room.nightStep}` : ''}
+              Round {state.currentRound} · {state.status}
             </p>
             <h1 className="text-3xl font-bold text-white">Your Game</h1>
           </div>
           <GlassPanel className="min-w-[200px] text-center !py-3">
-            <Countdown endsAt={room.phaseEndsAt} paused={room.paused} />
+            <Countdown
+              timerStartedAt={state.timerStartedAt}
+              timerDurationMs={state.timerDurationMs}
+              paused={room.paused}
+            />
           </GlassPanel>
         </header>
 
@@ -71,7 +88,7 @@ export function PlayerGameView({
               Your Role
             </p>
             <h2 className="mt-2 text-4xl font-extrabold text-white">
-              {role ?? 'Hidden'}
+              {role ?? (state.status === 'waiting' ? 'Waiting' : 'Hidden')}
             </h2>
             {info && (
               <>
@@ -83,9 +100,9 @@ export function PlayerGameView({
                 </p>
               </>
             )}
-            {!me.alive && (
+            {me.isSpectator && (
               <p className="mt-4 rounded-xl bg-rose-500/15 px-3 py-2 text-sm text-rose-200">
-                You are dead. Spectate quietly — mic muted.
+                Spectator mode — you cannot vote or use abilities.
               </p>
             )}
           </GlassPanel>
@@ -95,27 +112,28 @@ export function PlayerGameView({
               Controls
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
-              <GhostButton
-                disabled={!me.alive}
-                onClick={() =>
-                  void onPatchPlayer({ handRaised: !me.handRaised })
-                }
-              >
+              <GhostButton disabled={!me.isAlive} onClick={onToggleHand}>
                 <Hand className="h-4 w-4" />
-                {me.handRaised ? 'Lower Hand' : 'Raise Hand'}
+                {me.raisedHand ? 'Lower Hand' : 'Raise Hand'}
               </GhostButton>
               <GhostButton
-                disabled={!me.alive || !room.settings.voiceEnabled}
-                onClick={() => void onPatchPlayer({ micOn: !me.micOn })}
+                disabled={!me.isAlive || !room.settings.voiceEnabled}
+                onClick={onToggleMic}
               >
-                {me.micOn ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
+                {me.micEnabled ? (
+                  <Mic className="h-4 w-4" />
+                ) : (
+                  <MicOff className="h-4 w-4" />
+                )}
                 Mic
               </GhostButton>
               <GhostButton
-                disabled={!me.alive || !room.settings.videoEnabled || isNight}
-                onClick={() => void onPatchPlayer({ cameraOn: !me.cameraOn })}
+                disabled={
+                  !me.isAlive || !room.settings.videoEnabled || isNight
+                }
+                onClick={onToggleCamera}
               >
-                {me.cameraOn ? (
+                {me.cameraEnabled ? (
                   <Video className="h-4 w-4" />
                 ) : (
                   <VideoOff className="h-4 w-4" />
@@ -123,76 +141,43 @@ export function PlayerGameView({
                 Camera
               </GhostButton>
             </div>
-            {room.morningMessage && room.phase === 'morning' && (
+            {state.morningMessage && state.status === 'morning' && (
               <p className="mt-4 rounded-xl bg-white/5 px-3 py-2 text-sm text-slate-200">
-                {room.morningMessage}
+                {state.morningMessage}
               </p>
             )}
           </GlassPanel>
         </div>
 
-        {/* Night actions */}
-        {me.alive && isNight && role === 'Doctor' && room.nightStep === 'doctor' && (
+        {canActAtNight && (
           <ActionPicker
-            title="Protect a player"
-            players={alive}
-            selected={room.nightActions.doctorSaveId}
-            onSelect={(id) => void onNightAction({ doctorSaveId: id })}
+            title={
+              role === 'Doctor'
+                ? 'Protect a player'
+                : role === 'Detective'
+                  ? 'Investigate a player'
+                  : 'Choose Mafia target'
+            }
+            players={
+              isMafiaTeam(role)
+                ? alive.filter((p) => p.playerId !== me.playerId)
+                : alive
+            }
+            selected={myNight?.targetId}
+            onSelect={onNightAction}
           />
         )}
 
-        {me.alive &&
-          isNight &&
-          role === 'Detective' &&
-          room.nightStep === 'detective' && (
-            <ActionPicker
-              title="Investigate a player"
-              players={alive.filter((p) => p.id !== me.id)}
-              selected={room.nightActions.detectiveTargetId}
-              onSelect={(id) => void onNightAction({ detectiveTargetId: id })}
-            />
-          )}
-
-        {me.alive &&
-          isNight &&
-          isMafiaTeam(role) &&
-          room.nightStep === 'mafia' && (
-            <div className="space-y-3">
-              <GlassPanel>
-                <p className="text-sm text-slate-300">
-                  Mafia circle:{' '}
-                  {mafiaAlive.map((p) => p.name).join(', ') || 'None'}
-                </p>
-              </GlassPanel>
-              <ActionPicker
-                title="Vote for a target"
-                players={alive.filter((p) => !isMafiaTeam(p.role))}
-                selected={room.nightActions.mafiaVotes[me.id]}
-                onSelect={(id) =>
-                  void onNightAction({
-                    mafiaVotes: {
-                      ...room.nightActions.mafiaVotes,
-                      [me.id]: id,
-                    },
-                  })
-                }
-              />
-            </div>
-          )}
-
-        {/* Voting */}
-        {me.alive && room.phase === 'voting' && (
+        {me.isAlive && state.status === 'voting' && (
           <ActionPicker
             title="Cast your vote"
-            players={alive.filter((p) => p.id !== me.id)}
+            players={alive.filter((p) => p.playerId !== me.playerId)}
             selected={
-              room.votes[me.id] === 'abstain' ? undefined : room.votes[me.id]
+              myVote?.targetId === 'abstain' ? undefined : myVote?.targetId
             }
-            onSelect={(id) => void onVote(id)}
+            onSelect={onVote}
             extra={
-              <GhostButton onClick={() => void onVote('abstain')}>
-                Abstain
-              </GhostButton>
+              <GhostButton onClick={() => onVote('abstain')}>Abstain</GhostButton>
             }
           />
         )}
@@ -204,20 +189,30 @@ export function PlayerGameView({
             </h3>
             <div className="mt-3 grid gap-2">
               {alive.map((p) => (
-                <PlayerCard key={p.id} player={p} isYou={p.id === me.id} compact />
+                <PlayerCard
+                  key={p.playerId}
+                  player={p}
+                  isYou={p.playerId === me.playerId}
+                  compact
+                />
               ))}
             </div>
           </GlassPanel>
           <GlassPanel>
             <h3 className="font-mono text-xs uppercase tracking-[0.18em] text-slate-400">
-              Dead
+              Dead / Spectators
             </h3>
             <div className="mt-3 grid gap-2">
               {dead.length === 0 ? (
                 <p className="text-sm text-slate-500">No one yet</p>
               ) : (
                 dead.map((p) => (
-                  <PlayerCard key={p.id} player={p} isYou={p.id === me.id} compact />
+                  <PlayerCard
+                    key={p.playerId}
+                    player={p}
+                    isYou={p.playerId === me.playerId}
+                    compact
+                  />
                 ))
               )}
             </div>
@@ -230,7 +225,7 @@ export function PlayerGameView({
               Public Events
             </h3>
             <ul className="mt-2 space-y-2 text-sm text-slate-300">
-              {[...room.publicEvents].reverse().slice(0, 20).map((e) => (
+              {[...publicLogs].reverse().slice(0, 20).map((e) => (
                 <li key={e.id}>{e.message}</li>
               ))}
             </ul>
@@ -268,7 +263,7 @@ function ActionPicker({
   extra,
 }: {
   title: string
-  players: Player[]
+  players: PlayerDoc[]
   selected?: string
   onSelect: (id: string) => void
   extra?: React.ReactNode
@@ -281,13 +276,15 @@ function ActionPicker({
       <div className="mt-3 flex flex-wrap gap-2">
         {players.map((p) => (
           <PrimaryButton
-            key={p.id}
+            key={p.playerId}
             className={
-              selected === p.id ? 'ring-2 ring-white' : '!from-slate-200 !to-slate-400'
+              selected === p.playerId
+                ? 'ring-2 ring-white'
+                : '!from-slate-200 !to-slate-400'
             }
-            onClick={() => onSelect(p.id)}
+            onClick={() => onSelect(p.playerId)}
           >
-            {p.avatar} {p.name}
+            {p.avatar} {p.displayName}
           </PrimaryButton>
         ))}
         {extra}

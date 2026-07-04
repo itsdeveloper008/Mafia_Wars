@@ -1,7 +1,7 @@
 'use client'
 
 import { Download, RotateCcw, Trophy } from 'lucide-react'
-import type { RoomState } from '@/lib/game/types'
+import type { GameSession } from '@/types/game'
 import {
   FadeIn,
   GhostButton,
@@ -11,43 +11,45 @@ import {
 } from './ui'
 
 export function SummaryScreen({
-  room,
-  isHost,
+  session,
   onPlayAgain,
 }: {
-  room: RoomState
-  isHost: boolean
+  session: GameSession
   onPlayAgain: () => void
 }) {
+  const { room, state, players, secrets, publicLogs, isHost } = session
+  const roleById = Object.fromEntries(secrets.map((s) => [s.playerId, s.role]))
+  const winner = state.winner
+
   const title =
-    room.winner === 'mafia'
+    winner === 'mafia'
       ? 'Mafia Wins'
-      : room.winner === 'jester'
+      : winner === 'jester'
         ? 'Jester Wins'
-        : room.winner === 'civilians'
+        : winner === 'civilians'
           ? 'Town Wins'
           : 'Game Over'
 
   function downloadSummary() {
     const lines = [
-      `Mafia Wars Summary — Room ${room.code}`,
-      `Winner: ${room.winner ?? 'none'}`,
-      `Rounds: ${room.round}`,
+      `Mafia Wars Summary — Room ${room.roomCode}`,
+      `Winner: ${winner ?? 'none'}`,
+      `Rounds: ${state.currentRound}`,
       '',
       'Roles:',
-      ...room.players.map(
+      ...players.map(
         (p) =>
-          `- ${p.name}: ${p.role ?? '?'} (${p.alive ? 'survived' : 'eliminated'})`,
+          `- ${p.displayName}: ${roleById[p.playerId] ?? '?'} (${p.isAlive ? 'survived' : 'eliminated'})`,
       ),
       '',
       'Timeline:',
-      ...room.hostEvents.map((e) => `[R${e.round}/${e.phase}] ${e.message}`),
+      ...publicLogs.map((e) => `[R${e.round}/${e.phase}] ${e.message}`),
     ]
     const blob = new Blob([lines.join('\n')], { type: 'text/plain' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `mafia-wars-${room.code}.txt`
+    a.download = `mafia-wars-${room.roomCode}.txt`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -60,7 +62,7 @@ export function SummaryScreen({
         </div>
         <h1 className="text-5xl font-extrabold text-white">{title}</h1>
         <p className="text-slate-400">
-          Room {room.code} · {room.round} rounds
+          Room {room.roomCode} · {state.currentRound} rounds
         </p>
 
         <div className="grid gap-4 text-left sm:grid-cols-2">
@@ -69,16 +71,17 @@ export function SummaryScreen({
               Roles
             </h2>
             <ul className="mt-3 space-y-2 text-sm">
-              {room.players.map((p) => (
+              {players.map((p) => (
                 <li
-                  key={p.id}
+                  key={p.playerId}
                   className="flex items-center justify-between border-b border-white/5 pb-2"
                 >
                   <span>
-                    {p.avatar} {p.name}
+                    {p.avatar} {p.displayName}
                   </span>
                   <span className="font-mono text-amber-glow">
-                    {p.role} · {p.alive ? 'Survived' : 'Out'}
+                    {roleById[p.playerId] ?? '—'} ·{' '}
+                    {p.isAlive ? 'Survived' : 'Out'}
                   </span>
                 </li>
               ))}
@@ -89,7 +92,7 @@ export function SummaryScreen({
               Timeline
             </h2>
             <ul className="mt-3 space-y-2 text-sm text-slate-300">
-              {room.publicEvents.map((e) => (
+              {publicLogs.map((e) => (
                 <li key={e.id}>{e.message}</li>
               ))}
             </ul>

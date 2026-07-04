@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { ArrowLeft, DoorOpen, Plus } from 'lucide-react'
-import { AVATARS } from '@/lib/game/types'
+import { AVATARS } from '@/constants/settings'
 import {
   FadeIn,
   Field,

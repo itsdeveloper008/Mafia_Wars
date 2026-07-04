@@ -1,9 +1,88 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Open rules for party play — tighten with Auth later.
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isHost(roomId) {
+      return signedIn()
+        && get(/databases/$(database)/documents/rooms/$(roomId)).data.hostId == request.auth.uid;
+    }
+
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    match /roomCodes/{code} {
+      allow read: if signedIn();
+      allow write: if signedIn();
+    }
+
     match /rooms/{roomId} {
-      allow read, write: if true;
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.hostId == request.auth.uid;
+      allow update, delete: if isHost(roomId);
+
+      match /players/{playerId} {
+        allow read: if signedIn();
+        allow create: if isSelf(request.resource.data.uid)
+          && request.resource.data.playerId == request.auth.uid;
+        // Players may only update their own limited fields
+        allow update: if isSelf(resource.data.uid) &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly([
+              'isReady', 'raisedHand', 'micEnabled', 'cameraEnabled',
+              'notes', 'isConnected', 'connectionQuality', 'voteTarget', 'hasVoted'
+            ]);
+        allow update: if isHost(roomId);
+        allow delete: if isHost(roomId) || isSelf(resource.data.uid);
+      }
+
+      // Secrets: only owner or host
+      match /secrets/{playerId} {
+        allow read: if isHost(roomId) || isSelf(playerId);
+        allow write: if isHost(roomId);
+      }
+
+      match /state/{docId} {
+        allow read: if signedIn();
+        allow write: if isHost(roomId);
+      }
+
+      match /votes/{playerId} {
+        allow read: if isHost(roomId) || isSelf(playerId);
+        allow create, update: if isSelf(playerId)
+          && request.resource.data.uid == request.auth.uid;
+        allow delete: if isHost(roomId);
+      }
+
+      match /nightActions/{playerId} {
+        allow read: if isHost(roomId) || isSelf(playerId);
+        allow create, update: if isSelf(playerId)
+          && request.resource.data.uid == request.auth.uid;
+        allow delete: if isHost(roomId);
+      }
+
+      match /logs/{logId} {
+        allow read: if signedIn();
+        allow write: if isHost(roomId);
+      }
+
+      match /hostLogs/{logId} {
+        allow read: if isHost(roomId);
+        allow write: if isHost(roomId);
+      }
+    }
+
+    match /matchHistory/{matchId} {
+      allow read: if signedIn();
+      allow create: if signedIn();
+    }
+
+    match /statistics/{uid} {
+      allow read: if isSelf(uid);
+      allow write: if isSelf(uid) || signedIn();
     }
   }
 }
