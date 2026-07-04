@@ -1,19 +1,9 @@
-:root {
-  font-family: var(--font-inter), Inter, system-ui, -apple-system,
-    BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-  color-scheme: dark;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
+:root {
+  color-scheme: dark;
 }
 
 html,
@@ -21,8 +11,13 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  background: #070b14;
 }
 
 button {
   font-family: inherit;
+}
+
+* {
+  box-sizing: border-box;
 }

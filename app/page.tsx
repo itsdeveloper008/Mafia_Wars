@@ -1,5 +1,5 @@
-import MafiaWarsApp from '@/components/MafiaWarsApp'
+import GameApp from '@/components/game/GameApp'
 
 export default function HomePage() {
-  return <MafiaWarsApp />
+  return <GameApp />
 }
