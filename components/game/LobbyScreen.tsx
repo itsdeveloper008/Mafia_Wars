@@ -4,13 +4,9 @@ import {
   CheckCircle2,
   Copy,
   DoorClosed,
-  Mic,
-  MicOff,
   Play,
   Share2,
   Users,
-  Video,
-  VideoOff,
 } from 'lucide-react'
 import { GAME_PRESETS } from '@/constants/settings'
 import { SoundManager } from '@/services/audio/SoundManager'
@@ -21,6 +17,7 @@ import { Card, CardHeader } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Select } from '@/components/ui/Input'
 import { FadeIn, Shell } from '@/components/ui/Shell'
+import { MediaDock } from './MediaDock'
 import { HostBadge, PlayerCard } from './PlayerCard'
 
 export function LobbyScreen({
@@ -35,6 +32,7 @@ export function LobbyScreen({
   onStart,
   onEndRoom,
   onToggleAutoMode,
+  media,
 }: {
   session: GameSession
   busy: boolean
@@ -47,6 +45,19 @@ export function LobbyScreen({
   onStart: () => void
   onEndRoom: () => void
   onToggleAutoMode: (auto: boolean) => void
+  media?: {
+    connection: string
+    peerCount: number
+    voiceError?: string
+    micOn: boolean
+    camOn: boolean
+    videoAllowed: boolean
+    localStream: MediaStream | null
+    remoteStreams: Record<string, MediaStream>
+    nameByUid: Record<string, string>
+    onToggleMic: () => void
+    onToggleCam: () => void
+  }
 }) {
   const { room, players, isHost, me } = session
   const s = room.settings
@@ -151,33 +162,24 @@ export function LobbyScreen({
                 >
                   {me.isReady ? 'Unready' : 'Ready Up'}
                 </Button>
-                <Button
-                  variant="outline"
-                  leftIcon={
-                    me.micEnabled ? (
-                      <Mic className="h-4 w-4" />
-                    ) : (
-                      <MicOff className="h-4 w-4" />
-                    )
-                  }
-                  onClick={onToggleMic}
-                >
-                  Mic
-                </Button>
-                <Button
-                  variant="outline"
-                  leftIcon={
-                    me.cameraEnabled ? (
-                      <Video className="h-4 w-4" />
-                    ) : (
-                      <VideoOff className="h-4 w-4" />
-                    )
-                  }
-                  onClick={onToggleCamera}
-                >
-                  Camera
-                </Button>
               </Card>
+            )}
+
+            {media && (
+              <MediaDock
+                connection={media.connection}
+                peerCount={media.peerCount}
+                voiceError={media.voiceError}
+                isHost={isHost}
+                micOn={media.micOn}
+                camOn={media.camOn}
+                videoAllowed={media.videoAllowed}
+                localStream={media.localStream}
+                remoteStreams={media.remoteStreams}
+                nameByUid={media.nameByUid}
+                onToggleMic={media.onToggleMic}
+                onToggleCam={media.onToggleCam}
+              />
             )}
           </section>
 

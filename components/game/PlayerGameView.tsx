@@ -1,9 +1,10 @@
 'use client'
 
-import { Hand, Mic, MicOff, Video, VideoOff } from 'lucide-react'
+import { Hand } from 'lucide-react'
 import { isMafiaTeam } from '@/constants/roles'
 import { ROLE_INFO } from '@/constants/roles'
 import type { GameSession, PlayerDoc } from '@/types/game'
+import { MediaDock } from './MediaDock'
 import { PlayerCard } from './PlayerCard'
 import {
   Countdown,
@@ -21,6 +22,7 @@ export function PlayerGameView({
   onToggleCamera,
   onVote,
   onNightAction,
+  media,
 }: {
   session: GameSession
   onToggleHand: () => void
@@ -28,6 +30,19 @@ export function PlayerGameView({
   onToggleCamera: () => void
   onVote: (id: string) => void
   onNightAction: (id: string) => void
+  media?: {
+    connection: string
+    peerCount: number
+    voiceError?: string
+    micOn: boolean
+    camOn: boolean
+    videoAllowed: boolean
+    localStream: MediaStream | null
+    remoteStreams: Record<string, MediaStream>
+    nameByUid: Record<string, string>
+    onToggleMic: () => void
+    onToggleCam: () => void
+  }
 }) {
   const { room, state, players, me, mySecret, votes, nightActions, publicLogs } =
     session
@@ -108,37 +123,11 @@ export function PlayerGameView({
           </GlassPanel>
 
           <GlassPanel>
-            <p className="mw-label text-mw-muted">
-              Controls
-            </p>
+            <p className="mw-label">Controls</p>
             <div className="mt-3 flex flex-wrap gap-2">
               <GhostButton disabled={!me.isAlive} onClick={onToggleHand}>
                 <Hand className="h-4 w-4" />
                 {me.raisedHand ? 'Lower Hand' : 'Raise Hand'}
-              </GhostButton>
-              <GhostButton
-                disabled={!me.isAlive || !room.settings.voiceEnabled}
-                onClick={onToggleMic}
-              >
-                {me.micEnabled ? (
-                  <Mic className="h-4 w-4" />
-                ) : (
-                  <MicOff className="h-4 w-4" />
-                )}
-                Mic
-              </GhostButton>
-              <GhostButton
-                disabled={
-                  !me.isAlive || !room.settings.videoEnabled || isNight
-                }
-                onClick={onToggleCamera}
-              >
-                {me.cameraEnabled ? (
-                  <Video className="h-4 w-4" />
-                ) : (
-                  <VideoOff className="h-4 w-4" />
-                )}
-                Camera
               </GhostButton>
             </div>
             {state.morningMessage && state.status === 'morning' && (
@@ -148,6 +137,23 @@ export function PlayerGameView({
             )}
           </GlassPanel>
         </div>
+
+        {media && (
+          <MediaDock
+            connection={media.connection}
+            peerCount={media.peerCount}
+            voiceError={media.voiceError}
+            isHost={false}
+            micOn={media.micOn}
+            camOn={media.camOn}
+            videoAllowed={media.videoAllowed}
+            localStream={media.localStream}
+            remoteStreams={media.remoteStreams}
+            nameByUid={media.nameByUid}
+            onToggleMic={media.onToggleMic}
+            onToggleCam={media.onToggleCam}
+          />
+        )}
 
         {canActAtNight && (
           <ActionPicker

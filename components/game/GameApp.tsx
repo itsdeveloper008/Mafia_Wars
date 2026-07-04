@@ -67,6 +67,45 @@ export default function GameApp() {
     return () => window.removeEventListener('pointerdown', unlock)
   }, [])
 
+  const nameByUid = useMemo(() => {
+    const map: Record<string, string> = {}
+    if (!session) return map
+    if (session.room.hostId) {
+      map[session.room.hostId] = session.room.hostName || 'Host'
+    }
+    session.players.forEach((p) => {
+      map[p.uid] = p.displayName
+      map[p.playerId] = p.displayName
+    })
+    return map
+  }, [session])
+
+  const mediaProps = session
+    ? {
+        connection: voice.connection,
+        peerCount: voice.peerCount,
+        voiceError: voice.voiceError,
+        micOn: session.isHost
+          ? voice.hostMicOn
+          : Boolean(session.me?.micEnabled),
+        camOn: session.isHost
+          ? voice.hostCamOn
+          : Boolean(session.me?.cameraEnabled),
+        videoAllowed: voice.videoAllowed,
+        localStream: voice.localStream,
+        remoteStreams: voice.remoteStreams,
+        nameByUid,
+        onToggleMic: () => {
+          if (session.isHost) voice.toggleHostMic()
+          else void voice.togglePlayerMic()
+        },
+        onToggleCam: () => {
+          if (session.isHost) voice.toggleHostCam()
+          else void voice.togglePlayerCam()
+        },
+      }
+    : undefined
+
   const pttVisible =
     session &&
     !session.isHost &&
@@ -154,8 +193,8 @@ export default function GameApp() {
               SoundManager.play('click')
               void actions?.toggleReady()
             }}
-            onToggleMic={() => void actions?.toggleMic()}
-            onToggleCamera={() => void actions?.toggleCamera()}
+            onToggleMic={() => void voice.togglePlayerMic()}
+            onToggleCamera={() => void voice.togglePlayerCam()}
             onKick={(id) => void actions?.kick(id)}
             onStart={() => {
               SoundManager.play('reveal')
@@ -171,6 +210,7 @@ export default function GameApp() {
                 autoMode,
               })
             }
+            media={mediaProps}
           />
         )}
 
@@ -195,6 +235,7 @@ export default function GameApp() {
             peerCount={voice.peerCount}
             hostMicOn={voice.hostMicOn}
             onToggleHostMic={voice.toggleHostMic}
+            media={mediaProps}
             onPause={(paused) => void actions?.pause(paused)}
             onSkip={() => void actions?.skipPhase()}
             onEnd={() => void actions?.playAgain()}
@@ -231,8 +272,9 @@ export default function GameApp() {
           <PlayerGameView
             session={session}
             onToggleHand={() => void actions?.toggleHand()}
-            onToggleMic={() => void actions?.toggleMic()}
-            onToggleCamera={() => void actions?.toggleCamera()}
+            onToggleMic={() => void voice.togglePlayerMic()}
+            onToggleCamera={() => void voice.togglePlayerCam()}
+            media={mediaProps}
             onVote={(id) => {
               SoundManager.play('vote')
               void actions?.vote(id)

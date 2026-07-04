@@ -14,6 +14,7 @@ import {
   VideoOff,
 } from 'lucide-react'
 import type { GameSession } from '@/types/game'
+import { MediaDock } from './MediaDock'
 import { PlayerCard } from './PlayerCard'
 import {
   Countdown,
@@ -44,6 +45,7 @@ export function HostDashboard({
   peerCount,
   hostMicOn,
   onToggleHostMic,
+  media,
 }: {
   session: GameSession
   onPause: (paused: boolean) => void
@@ -63,6 +65,19 @@ export function HostDashboard({
   peerCount?: number
   hostMicOn?: boolean
   onToggleHostMic?: () => void
+  media?: {
+    connection: string
+    peerCount: number
+    voiceError?: string
+    micOn: boolean
+    camOn: boolean
+    videoAllowed: boolean
+    localStream: MediaStream | null
+    remoteStreams: Record<string, MediaStream>
+    nameByUid: Record<string, string>
+    onToggleMic: () => void
+    onToggleCam: () => void
+  }
 }) {
   const { room, state, players, secrets, votes, hostLogs } = session
   const roleById = Object.fromEntries(secrets.map((s) => [s.playerId, s.role]))
@@ -119,11 +134,26 @@ export function HostDashboard({
           </GlassPanel>
         )}
 
+        {media && (
+          <MediaDock
+            connection={media.connection}
+            peerCount={media.peerCount}
+            voiceError={media.voiceError}
+            isHost
+            micOn={media.micOn}
+            camOn={media.camOn}
+            videoAllowed={media.videoAllowed}
+            localStream={media.localStream}
+            remoteStreams={media.remoteStreams}
+            nameByUid={media.nameByUid}
+            onToggleMic={media.onToggleMic}
+            onToggleCam={media.onToggleCam}
+          />
+        )}
+
         <div className="grid gap-4 xl:grid-cols-[1.3fr_1fr_1fr]">
           <section className="space-y-3">
-            <h2 className="mw-label text-mw-muted">
-              Player Grid
-            </h2>
+            <h2 className="mw-label">Player Grid</h2>
             <div className="grid gap-3 sm:grid-cols-2">
               {players.map((p, i) => (
                 <div key={p.playerId} className="space-y-1">

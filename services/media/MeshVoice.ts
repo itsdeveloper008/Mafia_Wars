@@ -34,20 +34,18 @@ export type MeshCallbacks = {
   onConnection?: (state: 'connecting' | 'connected' | 'disconnected') => void
   onSpeaking?: (identity: string, speaking: boolean) => void
   onPeerCount?: (count: number) => void
+  onRemoteStream?: (uid: string, stream: MediaStream | null) => void
+  onLocalStream?: (stream: MediaStream | null) => void
   onError?: (message: string) => void
 }
 
-/**
- * Small-room WebRTC mesh using Firestore for signaling.
- * Works without LiveKit — suitable for party games (up to ~8 peers).
- */
 export class MeshVoiceService {
   private roomId = ''
   private uid = ''
   private localStream: MediaStream | null = null
   private peers = new Map<string, RTCPeerConnection>()
   private makingOffer = new Set<string>()
-  private audioEls = new Map<string, HTMLAudioElement>()
+  private remoteStreams = new Map<string, MediaStream>()
   private unsubs: Unsubscribe[] = []
   private callbacks: MeshCallbacks = {}
   private analyser: AnalyserNode | null = null
@@ -64,6 +62,7 @@ export class MeshVoiceService {
     uid: string
     name: string
     enableMic: boolean
+    enableCam: boolean
   }) {
     await this.disconnect()
     this.roomId = input.roomId
@@ -71,21 +70,49 @@ export class MeshVoiceService {
     this.callbacks.onConnection?.('connecting')
 
     try {
-      this.localStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-        video: false,
-      })
-
-      if (!input.enableMic) {
-        this.localStream.getAudioTracks().forEach((t) => {
-          t.enabled = false
+      // Prefer audio+video; fall back to audio-only if camera fails
+      try {
+        this.localStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+          video: input.enableCam
+            ? { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' }
+            : false,
+        })
+      } catch {
+        this.localStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+          video: false,
         })
       }
 
+      // If video was requested but not granted, try adding camera separately
+      if (input.enableCam && !this.localStream.getVideoTracks().length) {
+        try {
+          const cam = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+          })
+          cam.getVideoTracks().forEach((t) => this.localStream!.addTrack(t))
+        } catch {
+          // camera optional
+        }
+      }
+
+      this.localStream.getAudioTracks().forEach((t) => {
+        t.enabled = input.enableMic
+      })
+      this.localStream.getVideoTracks().forEach((t) => {
+        t.enabled = input.enableCam
+      })
+
+      this.callbacks.onLocalStream?.(this.localStream)
       this.startLocalSpeakDetect()
 
       await setDoc(doc(getDb(), 'rooms', this.roomId, 'voicePeers', this.uid), {
@@ -102,26 +129,19 @@ export class MeshVoiceService {
               .map((d) => d.data().uid as string)
               .filter((id) => id && id !== this.uid)
 
-            // Remove peers that left
             for (const id of [...this.peers.keys()]) {
               if (!others.includes(id)) this.closePeer(id)
             }
 
-            // Connect to new peers (lower uid creates offer to avoid glare)
             for (const otherId of others) {
               if (this.peers.has(otherId)) continue
-              if (this.uid < otherId) {
-                void this.createOffer(otherId)
-              } else {
-                this.ensurePeer(otherId)
-              }
+              if (this.uid < otherId) void this.createOffer(otherId)
+              else this.ensurePeer(otherId)
             }
 
             this.callbacks.onPeerCount?.(others.length)
-            if (others.length >= 0) {
-              this.connected = true
-              this.callbacks.onConnection?.('connected')
-            }
+            this.connected = true
+            this.callbacks.onConnection?.('connected')
           },
           (err) => this.callbacks.onError?.(err.message),
         ),
@@ -147,10 +167,6 @@ export class MeshVoiceService {
       this.callbacks.onConnection?.('disconnected')
       throw e
     }
-  }
-
-  private peersCol() {
-    return collection(getDb(), 'rooms', this.roomId, 'voicePeers')
   }
 
   private signalsCol() {
@@ -180,28 +196,37 @@ export class MeshVoiceService {
     }
 
     pc.ontrack = (ev) => {
-      const [stream] = ev.streams
-      if (!stream) return
-      let audio = this.audioEls.get(remoteId)
-      if (!audio) {
-        audio = new Audio()
-        audio.autoplay = true
-        audio.setAttribute('playsinline', 'true')
-        this.audioEls.set(remoteId, audio)
+      let stream = this.remoteStreams.get(remoteId)
+      if (!stream) {
+        stream = new MediaStream()
+        this.remoteStreams.set(remoteId, stream)
       }
-      audio.srcObject = stream
-      void audio.play().catch(() => {
-        // Autoplay may require a user gesture; retry on next interaction
+      ev.streams[0]?.getTracks().forEach((track) => {
+        const already = stream!.getTracks().some((t) => t.id === track.id)
+        if (!already) stream!.addTrack(track)
       })
-    }
+      // Also handle track without streams array
+      if (ev.track && !stream.getTracks().some((t) => t.id === ev.track.id)) {
+        stream.addTrack(ev.track)
+      }
+      this.callbacks.onRemoteStream?.(remoteId, stream)
 
-    pc.onconnectionstatechange = () => {
-      if (
-        pc.connectionState === 'failed' ||
-        pc.connectionState === 'disconnected' ||
-        pc.connectionState === 'closed'
-      ) {
-        // keep peer entry; presence snapshot will clean up if they left
+      // Ensure audio plays
+      const audioTracks = stream.getAudioTracks()
+      if (audioTracks.length) {
+        let audio = document.getElementById(
+          `mesh-audio-${remoteId}`,
+        ) as HTMLAudioElement | null
+        if (!audio) {
+          audio = document.createElement('audio')
+          audio.id = `mesh-audio-${remoteId}`
+          audio.autoplay = true
+          audio.setAttribute('playsinline', 'true')
+          audio.style.display = 'none'
+          document.body.appendChild(audio)
+        }
+        audio.srcObject = stream
+        void audio.play().catch(() => undefined)
       }
     }
 
@@ -254,29 +279,25 @@ export class MeshVoiceService {
         try {
           await pc.addIceCandidate(JSON.parse(signal.candidate))
         } catch {
-          // ignore bad/out-of-order ICE
+          // ignore
         }
       }
     } finally {
-      // Clean up consumed signal
       void deleteDoc(doc(getDb(), 'rooms', this.roomId, 'voiceSignals', docId))
     }
   }
 
   private closePeer(remoteId: string) {
-    const pc = this.peers.get(remoteId)
-    pc?.close()
+    this.peers.get(remoteId)?.close()
     this.peers.delete(remoteId)
-    const audio = this.audioEls.get(remoteId)
-    if (audio) {
-      audio.srcObject = null
-      audio.remove()
-      this.audioEls.delete(remoteId)
-    }
+    this.remoteStreams.delete(remoteId)
+    this.callbacks.onRemoteStream?.(remoteId, null)
+    const audio = document.getElementById(`mesh-audio-${remoteId}`)
+    audio?.remove()
   }
 
   private startLocalSpeakDetect() {
-    if (!this.localStream) return
+    if (!this.localStream?.getAudioTracks().length) return
     this.audioCtx = new AudioContext()
     const source = this.audioCtx.createMediaStreamSource(this.localStream)
     this.analyser = this.audioCtx.createAnalyser()
@@ -288,7 +309,8 @@ export class MeshVoiceService {
       if (!this.analyser) return
       this.analyser.getByteFrequencyData(data)
       const avg = data.reduce((a, b) => a + b, 0) / data.length
-      this.callbacks.onSpeaking?.(this.uid, avg > 18)
+      const live = this.localStream?.getAudioTracks().some((t) => t.enabled) ?? false
+      this.callbacks.onSpeaking?.(this.uid, live && avg > 18)
       this.speakTimer = window.setTimeout(tick, 120)
     }
     tick()
@@ -298,6 +320,44 @@ export class MeshVoiceService {
     this.localStream?.getAudioTracks().forEach((t) => {
       t.enabled = enabled
     })
+  }
+
+  async setCamEnabled(enabled: boolean) {
+    const hasVideo = Boolean(this.localStream?.getVideoTracks().length)
+    if (!hasVideo && enabled) {
+      try {
+        const cam = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+        })
+        const track = cam.getVideoTracks()[0]
+        if (track && this.localStream) {
+          this.localStream.addTrack(track)
+          // Add to existing peer connections and renegotiate
+          for (const [remoteId, pc] of this.peers) {
+            pc.addTrack(track, this.localStream)
+            if (this.uid < remoteId) void this.createOffer(remoteId)
+          }
+          this.callbacks.onLocalStream?.(this.localStream)
+        }
+      } catch (e) {
+        this.callbacks.onError?.(
+          e instanceof Error ? e.message : 'Camera permission denied',
+        )
+        return
+      }
+    }
+    this.localStream?.getVideoTracks().forEach((t) => {
+      t.enabled = enabled
+    })
+    this.callbacks.onLocalStream?.(this.localStream)
+  }
+
+  getLocalStream() {
+    return this.localStream
+  }
+
+  getRemoteStreams() {
+    return new Map(this.remoteStreams)
   }
 
   async disconnect() {
@@ -315,6 +375,7 @@ export class MeshVoiceService {
 
     this.localStream?.getTracks().forEach((t) => t.stop())
     this.localStream = null
+    this.callbacks.onLocalStream?.(null)
 
     if (this.roomId && this.uid) {
       void deleteDoc(doc(getDb(), 'rooms', this.roomId, 'voicePeers', this.uid))
@@ -324,10 +385,6 @@ export class MeshVoiceService {
     this.roomId = ''
     this.uid = ''
     this.callbacks.onConnection?.('disconnected')
-  }
-
-  isConnected() {
-    return this.connected
   }
 }
 

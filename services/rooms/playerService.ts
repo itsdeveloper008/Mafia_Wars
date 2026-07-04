@@ -45,7 +45,7 @@ export async function joinAsPlayer(input: {
     hasVoted: false,
     raisedHand: false,
     raisedHandAt: null,
-    micEnabled: false,
+    micEnabled: true,
     cameraEnabled: false,
     isHost: false,
     isSpectator: false,
