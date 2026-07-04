@@ -31,6 +31,7 @@ import {
 } from '@/services/rooms/playerService'
 import {
   createRoom,
+  endRoom,
   getRoomByCode,
   getRoomById,
   setRoomPaused,
@@ -155,16 +156,41 @@ export function useGameSession() {
   const isHost = Boolean(room && uid && room.hostId === uid)
   const me = players.find((p) => p.uid === uid)
 
+  const clearSession = useCallback(() => {
+    setRoom(null)
+    setState(null)
+    setPlayers([])
+    setMySecret(null)
+    setSecrets([])
+    setVotes({})
+    setNightActions([])
+    setPublicLogs([])
+    setHostLogs([])
+    setError('')
+    sessionStorage.clearRoom()
+  }, [])
+
   useEffect(() => {
     if (!roomId) return
     const unsubs = [
-      subscribeRoom(roomId, setRoom, (e) => setError(e.message)),
+      subscribeRoom(roomId, setRoom, (e) => {
+        if (e.message.toLowerCase().includes('deleted')) {
+          clearSession()
+          pushToast({
+            title: 'Room ended',
+            description: 'The host closed this room.',
+            tone: 'warning',
+          })
+          return
+        }
+        setError(e.message)
+      }),
       subscribeState(roomId, setState),
       subscribePlayers(roomId, setPlayers, (e) => setError(e.message)),
       subscribePublicLogs(roomId, setPublicLogs),
     ]
     return () => unsubs.forEach((u) => u())
-  }, [roomId])
+  }, [roomId, clearSession, pushToast])
 
   // Host reads all votes/actions; players only their own (security rules)
   useEffect(() => {
@@ -411,6 +437,31 @@ export function useGameSession() {
           setBusy(false)
         }
       },
+      endRoom: async () => {
+        setBusy(true)
+        try {
+          await endRoom(room.roomId, room.roomCode)
+          clearSession()
+          logger.info('room.ended', { roomId: room.roomId })
+          analytics.track('room_ended', { roomCode: room.roomCode })
+          pushToast({
+            title: 'Room ended',
+            description: 'The room was closed.',
+            tone: 'info',
+          })
+        } catch (e) {
+          const err = toUserError(e)
+          setError(err.userMessage)
+          pushToast({
+            title: 'Could not end room',
+            description: err.userMessage,
+            tone: 'danger',
+          })
+          throw e
+        } finally {
+          setBusy(false)
+        }
+      },
       pause: (paused: boolean) => setRoomPaused(room.roomId, paused),
       skipPhase: async () => {
         if (!state) return
@@ -525,7 +576,19 @@ export function useGameSession() {
         })
       },
     }
-  }, [room, uid, me, players, state, secrets, votes, nightActions, mySecret, pushToast])
+  }, [
+    room,
+    uid,
+    me,
+    players,
+    state,
+    secrets,
+    votes,
+    nightActions,
+    mySecret,
+    pushToast,
+    clearSession,
+  ])
 
   // Mark disconnected on tab close
   useEffect(() => {

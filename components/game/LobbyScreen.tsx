@@ -3,6 +3,7 @@
 import {
   CheckCircle2,
   Copy,
+  DoorClosed,
   Mic,
   MicOff,
   Play,
@@ -32,6 +33,7 @@ export function LobbyScreen({
   onToggleCamera,
   onKick,
   onStart,
+  onEndRoom,
   onToggleAutoMode,
 }: {
   session: GameSession
@@ -43,6 +45,7 @@ export function LobbyScreen({
   onToggleCamera: () => void
   onKick: (id: string) => void
   onStart: () => void
+  onEndRoom: () => void
   onToggleAutoMode: (auto: boolean) => void
 }) {
   const { room, players, isHost, me } = session
@@ -319,17 +322,37 @@ export function LobbyScreen({
             </Card>
 
             {isHost ? (
-              <Button
-                variant="gold"
-                size="lg"
-                className="w-full"
-                loading={busy}
-                disabled={players.length < 4}
-                leftIcon={<Play className="h-5 w-5" />}
-                onClick={onStart}
-              >
-                Start Game
-              </Button>
+              <div className="space-y-2">
+                <Button
+                  variant="gold"
+                  size="lg"
+                  className="w-full"
+                  loading={busy}
+                  disabled={players.length < 4}
+                  leftIcon={<Play className="h-5 w-5" />}
+                  onClick={onStart}
+                >
+                  Start Game
+                </Button>
+                <Button
+                  variant="danger"
+                  size="lg"
+                  className="w-full"
+                  loading={busy}
+                  leftIcon={<DoorClosed className="h-5 w-5" />}
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        'End this room? All players will be disconnected.',
+                      )
+                    ) {
+                      onEndRoom()
+                    }
+                  }}
+                >
+                  End Room
+                </Button>
+              </div>
             ) : (
               <Card>
                 <p className="text-sm text-mw-muted">

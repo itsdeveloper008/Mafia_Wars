@@ -1,14 +1,27 @@
 import {
+  collection,
   getDoc,
+  getDocs,
   onSnapshot,
   setDoc,
   updateDoc,
+  writeBatch,
   type Unsubscribe,
 } from 'firebase/firestore'
 import { DEFAULT_ROOM_SETTINGS } from '@/constants/settings'
+import { getDb } from '@/services/firebase/client'
 import type { GameStateDoc, RoomDoc, RoomSettings } from '@/types/game'
-// RoomDoc used in updateRoomFields
-import { codeIndexDoc, roomDoc, stateDoc } from './paths'
+import {
+  codeIndexDoc,
+  hostLogsCol,
+  logsCol,
+  nightActionsCol,
+  playersCol,
+  roomDoc,
+  secretsCol,
+  stateDoc,
+  votesCol,
+} from './paths'
 
 export function generateRoomCode(): string {
   return Math.random().toString(36).slice(2, 7).toUpperCase()
@@ -132,4 +145,31 @@ export function subscribeState(
     },
     (err) => onError?.(err),
   )
+}
+
+/** Host closes the room (lobby or mid-game). Deletes room data. */
+export async function endRoom(roomId: string, roomCode: string): Promise<void> {
+  const db = getDb()
+  const batch = writeBatch(db)
+
+  const cols = [
+    playersCol(roomId),
+    secretsCol(roomId),
+    votesCol(roomId),
+    nightActionsCol(roomId),
+    logsCol(roomId),
+    hostLogsCol(roomId),
+    collection(db, 'rooms', roomId, 'voicePeers'),
+    collection(db, 'rooms', roomId, 'voiceSignals'),
+  ]
+
+  for (const colRef of cols) {
+    const snap = await getDocs(colRef)
+    snap.docs.forEach((d) => batch.delete(d.ref))
+  }
+
+  batch.delete(stateDoc(roomId))
+  batch.delete(roomDoc(roomId))
+  batch.delete(codeIndexDoc(roomCode))
+  await batch.commit()
 }

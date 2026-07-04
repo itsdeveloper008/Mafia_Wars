@@ -161,6 +161,10 @@ export default function GameApp() {
               SoundManager.play('reveal')
               void actions?.startGame().catch((e: Error) => setError(e.message))
             }}
+            onEndRoom={() => {
+              SoundManager.play('click')
+              void actions?.endRoom().catch((e: Error) => setError(e.message))
+            }}
             onToggleAutoMode={(autoMode) =>
               void actions?.updateSettings({
                 ...session.room.settings,
