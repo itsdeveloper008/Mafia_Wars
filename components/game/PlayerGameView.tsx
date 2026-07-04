@@ -67,10 +67,10 @@ export function PlayerGameView({
       <FadeIn className={`space-y-5 ${isNight ? 'brightness-90' : ''}`}>
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <p className="font-mono text-xs uppercase tracking-[0.2em] text-cyan-glow">
+            <p className="mw-label text-mw-primary">
               Round {state.currentRound} · {state.status}
             </p>
-            <h1 className="text-3xl font-bold text-white">Your Game</h1>
+            <h1 className="font-display text-3xl font-bold text-mw-text">Your Game</h1>
           </div>
           <GlassPanel className="min-w-[200px] text-center !py-3">
             <Countdown
@@ -84,31 +84,31 @@ export function PlayerGameView({
         <div className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
           <GlassPanel className="relative overflow-hidden">
             <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(251,191,36,0.15),transparent_55%)]" />
-            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-slate-400">
+            <p className="mw-label text-mw-muted">
               Your Role
             </p>
-            <h2 className="mt-2 text-4xl font-extrabold text-white">
+            <h2 className="mt-2 font-display text-4xl font-bold text-mw-text">
               {role ?? (state.status === 'waiting' ? 'Waiting' : 'Hidden')}
             </h2>
             {info && (
               <>
-                <p className="mt-1 font-mono text-xs uppercase tracking-wider text-amber-glow">
+                <p className="mt-1 font-mono text-xs uppercase tracking-wider text-mw-gold">
                   {info.team} · {info.active ? 'Active' : 'Passive'}
                 </p>
-                <p className="mt-3 text-sm leading-relaxed text-slate-300">
+                <p className="mt-3 text-sm leading-relaxed text-mw-muted">
                   {info.ability}
                 </p>
               </>
             )}
             {me.isSpectator && (
-              <p className="mt-4 rounded-xl bg-rose-500/15 px-3 py-2 text-sm text-rose-200">
+              <p className="mt-4 rounded-xl bg-rose-500/15 px-3 py-2 text-sm text-red-200">
                 Spectator mode — you cannot vote or use abilities.
               </p>
             )}
           </GlassPanel>
 
           <GlassPanel>
-            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-slate-400">
+            <p className="mw-label text-mw-muted">
               Controls
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
@@ -142,7 +142,7 @@ export function PlayerGameView({
               </GhostButton>
             </div>
             {state.morningMessage && state.status === 'morning' && (
-              <p className="mt-4 rounded-xl bg-white/5 px-3 py-2 text-sm text-slate-200">
+              <p className="mt-4 rounded-xl bg-white/5 px-3 py-2 text-sm text-mw-text">
                 {state.morningMessage}
               </p>
             )}
@@ -184,7 +184,7 @@ export function PlayerGameView({
 
         <div className="grid gap-4 md:grid-cols-2">
           <GlassPanel>
-            <h3 className="font-mono text-xs uppercase tracking-[0.18em] text-slate-400">
+            <h3 className="mw-label text-mw-muted">
               Alive
             </h3>
             <div className="mt-3 grid gap-2">
@@ -199,12 +199,12 @@ export function PlayerGameView({
             </div>
           </GlassPanel>
           <GlassPanel>
-            <h3 className="font-mono text-xs uppercase tracking-[0.18em] text-slate-400">
+            <h3 className="mw-label text-mw-muted">
               Dead / Spectators
             </h3>
             <div className="mt-3 grid gap-2">
               {dead.length === 0 ? (
-                <p className="text-sm text-slate-500">No one yet</p>
+                <p className="text-sm text-mw-faint">No one yet</p>
               ) : (
                 dead.map((p) => (
                   <PlayerCard
@@ -221,26 +221,26 @@ export function PlayerGameView({
 
         <div className="grid gap-4 md:grid-cols-2">
           <GlassPanel className="max-h-64 overflow-auto">
-            <h3 className="font-mono text-xs uppercase tracking-[0.18em] text-slate-400">
+            <h3 className="mw-label text-mw-muted">
               Public Events
             </h3>
-            <ul className="mt-2 space-y-2 text-sm text-slate-300">
+            <ul className="mt-2 space-y-2 text-sm text-mw-muted">
               {[...publicLogs].reverse().slice(0, 20).map((e) => (
                 <li key={e.id}>{e.message}</li>
               ))}
             </ul>
           </GlassPanel>
           <GlassPanel className="max-h-64 overflow-auto">
-            <h3 className="font-mono text-xs uppercase tracking-[0.18em] text-slate-400">
+            <h3 className="mw-label text-mw-muted">
               Private Log
             </h3>
-            <ul className="mt-2 space-y-2 text-sm text-cyan-100/90">
+            <ul className="mt-2 space-y-2 text-sm text-blue-100/90">
               {privateLog.length === 0 ? (
-                <li className="text-slate-500">No private notes yet</li>
+                <li className="text-mw-faint">No private notes yet</li>
               ) : (
                 [...privateLog].reverse().map((e) => (
                   <li key={e.id}>
-                    <span className="font-mono text-[10px] text-slate-500">
+                    <span className="font-mono text-[10px] text-mw-faint">
                       Night {e.round}
                     </span>
                     <p>{e.message}</p>
@@ -270,7 +270,7 @@ function ActionPicker({
 }) {
   return (
     <GlassPanel>
-      <h3 className="font-mono text-xs uppercase tracking-[0.18em] text-slate-400">
+      <h3 className="mw-label text-mw-muted">
         {title}
       </h3>
       <div className="mt-3 flex flex-wrap gap-2">

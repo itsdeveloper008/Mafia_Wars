@@ -57,17 +57,17 @@ export function SummaryScreen({
   return (
     <ScreenShell>
       <FadeIn className="mx-auto max-w-4xl space-y-6 pt-6 text-center">
-        <div className="inline-flex items-center gap-2 rounded-full bg-amber-glow/15 px-4 py-1 font-mono text-xs uppercase tracking-[0.2em] text-amber-glow">
+        <div className="inline-flex items-center gap-2 rounded-full bg-mw-gold/15 px-4 py-1 mw-label text-mw-gold">
           <Trophy className="h-4 w-4" /> Final Results
         </div>
-        <h1 className="text-5xl font-extrabold text-white">{title}</h1>
-        <p className="text-slate-400">
+        <h1 className="font-display text-5xl font-bold text-mw-text">{title}</h1>
+        <p className="text-mw-muted">
           Room {room.roomCode} · {state.currentRound} rounds
         </p>
 
         <div className="grid gap-4 text-left sm:grid-cols-2">
           <GlassPanel>
-            <h2 className="font-mono text-xs uppercase tracking-[0.18em] text-slate-400">
+            <h2 className="mw-label text-mw-muted">
               Roles
             </h2>
             <ul className="mt-3 space-y-2 text-sm">
@@ -79,7 +79,7 @@ export function SummaryScreen({
                   <span>
                     {p.avatar} {p.displayName}
                   </span>
-                  <span className="font-mono text-amber-glow">
+                  <span className="font-mono text-mw-gold">
                     {roleById[p.playerId] ?? '—'} ·{' '}
                     {p.isAlive ? 'Survived' : 'Out'}
                   </span>
@@ -88,10 +88,10 @@ export function SummaryScreen({
             </ul>
           </GlassPanel>
           <GlassPanel className="max-h-80 overflow-auto">
-            <h2 className="font-mono text-xs uppercase tracking-[0.18em] text-slate-400">
+            <h2 className="mw-label text-mw-muted">
               Timeline
             </h2>
-            <ul className="mt-3 space-y-2 text-sm text-slate-300">
+            <ul className="mt-3 space-y-2 text-sm text-mw-muted">
               {publicLogs.map((e) => (
                 <li key={e.id}>{e.message}</li>
               ))}

@@ -1,23 +1,115 @@
+@import '../styles/tokens.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  color-scheme: dark;
+@layer base {
+  html,
+  body {
+    margin: 0;
+    min-width: 320px;
+    min-height: 100vh;
+    background: var(--mw-bg);
+    color: var(--mw-text);
+    color-scheme: dark;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font-family: inherit;
+  }
+
+  ::selection {
+    background: rgba(37, 99, 235, 0.35);
+    color: #fff;
+  }
+
+  /* Custom scrollbars */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(156, 163, 175, 0.35) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: rgba(156, 163, 175, 0.28);
+    border-radius: 999px;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: rgba(156, 163, 175, 0.45);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--mw-primary);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
 }
 
-html,
-body {
-  margin: 0;
-  min-width: 320px;
-  min-height: 100vh;
-  background: #070b14;
-}
+@layer components {
+  .mw-shell {
+    @apply relative min-h-screen overflow-x-hidden bg-mw-bg text-mw-text;
+  }
 
-button {
-  font-family: inherit;
-}
+  .mw-shell-bg {
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 80% 50% at 10% -10%, rgba(37, 99, 235, 0.16), transparent 55%),
+      radial-gradient(ellipse 60% 40% at 90% 10%, rgba(220, 38, 38, 0.12), transparent 50%),
+      radial-gradient(ellipse 50% 40% at 50% 100%, rgba(251, 191, 36, 0.06), transparent 55%),
+      var(--mw-bg);
+  }
 
-* {
-  box-sizing: border-box;
+  .mw-shell-bg::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+    background-size: 28px 28px;
+    opacity: 0.35;
+    mask-image: linear-gradient(to bottom, black, transparent 90%);
+  }
+
+  .mw-container {
+    @apply relative z-10 mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8;
+  }
+
+  .mw-label {
+    @apply font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-mw-muted;
+  }
+
+  .mw-title {
+    @apply font-display text-3xl font-bold tracking-tight text-mw-text sm:text-4xl;
+  }
+
+  .mw-subtitle {
+    @apply text-sm text-mw-muted sm:text-base;
+  }
 }

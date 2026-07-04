@@ -222,10 +222,10 @@ export default function GameApp() {
       {pttVisible && (
         <button
           type="button"
-          className={`fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 items-center gap-2 rounded-full px-8 py-4 text-sm font-bold shadow-glow transition ${
+          className={`fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 items-center gap-2 rounded-full px-8 py-4 text-sm font-bold shadow-mw-blue transition ${
             voice.pushToTalk
-              ? 'bg-cyan-glow text-navy-950'
-              : 'bg-navy-900/90 text-white ring-1 ring-white/20'
+              ? 'bg-mw-primary text-mw-bg'
+              : 'bg-mw-secondary/90 text-mw-text ring-1 ring-white/20'
           }`}
           onPointerDown={() => voice.holdPushToTalk(true)}
           onPointerUp={() => voice.holdPushToTalk(false)}

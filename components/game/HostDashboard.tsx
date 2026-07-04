@@ -71,17 +71,17 @@ export function HostDashboard({
       <FadeIn className="space-y-5">
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <p className="font-mono text-xs uppercase tracking-[0.2em] text-amber-glow">
+            <p className="mw-label text-mw-gold">
               Game Master Control · {room.settings.autoMode ? 'Auto' : 'Manual'}
             </p>
-            <h1 className="text-3xl font-bold text-white">Host Dashboard</h1>
-            <p className="text-sm text-slate-400">
+            <h1 className="font-display text-3xl font-bold text-mw-text">Host Dashboard</h1>
+            <p className="text-sm text-mw-muted">
               Room {room.roomCode} · Round {state.currentRound} · You are not a
               player
             </p>
           </div>
           <GlassPanel className="min-w-[220px] text-center !py-4">
-            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-slate-400">
+            <p className="mw-label text-mw-muted">
               {room.paused ? 'Paused' : state.status}
             </p>
             <Countdown
@@ -94,7 +94,7 @@ export function HostDashboard({
 
         {tieIds.length > 0 && (
           <GlassPanel>
-            <p className="mb-2 text-sm text-amber-200">
+            <p className="mb-2 text-sm text-mw-gold">
               Vote tied — choose who is eliminated:
             </p>
             <div className="flex flex-wrap gap-2">
@@ -112,7 +112,7 @@ export function HostDashboard({
 
         <div className="grid gap-4 xl:grid-cols-[1.3fr_1fr_1fr]">
           <section className="space-y-3">
-            <h2 className="font-mono text-xs uppercase tracking-[0.18em] text-slate-400">
+            <h2 className="mw-label text-mw-muted">
               Player Grid
             </h2>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -129,14 +129,14 @@ export function HostDashboard({
                   <div className="flex gap-2 px-1">
                     <button
                       type="button"
-                      className="text-[11px] text-cyan-glow"
+                      className="text-[11px] text-mw-primary"
                       onClick={() => onGrantSpeak(p.playerId)}
                     >
                       Give floor
                     </button>
                     <button
                       type="button"
-                      className="text-[11px] text-rose-300"
+                      className="text-[11px] text-mw-danger"
                       onClick={() => onHostMute(p.playerId, !p.hostMuted)}
                     >
                       {p.hostMuted ? 'Unmute' : 'Mute'}
@@ -149,7 +149,7 @@ export function HostDashboard({
 
           <section className="space-y-4">
             <GlassPanel>
-              <h2 className="font-mono text-xs uppercase tracking-[0.18em] text-slate-400">
+              <h2 className="mw-label text-mw-muted">
                 Host Controls
               </h2>
               <div className="mt-3 grid grid-cols-2 gap-2">
@@ -198,7 +198,7 @@ export function HostDashboard({
                 </GhostButton>
                 <GhostButton onClick={onClearSpeaker}>Clear Floor</GhostButton>
               </div>
-              <p className="mt-2 font-mono text-[10px] uppercase tracking-wider text-slate-500">
+              <p className="mt-2 font-mono text-[10px] uppercase tracking-wider text-mw-faint">
                 Voice: {voiceConnection ?? 'idle'} · Mode:{' '}
                 {room.settings.discussionMode}
               </p>
@@ -208,18 +208,18 @@ export function HostDashboard({
             </GlassPanel>
 
             <GlassPanel>
-              <h2 className="mb-2 flex items-center gap-2 font-mono text-xs uppercase tracking-[0.18em] text-slate-400">
+              <h2 className="mb-2 flex items-center gap-2 mw-label text-mw-muted">
                 <Hand className="h-4 w-4" /> Speaking Queue
               </h2>
               {room.currentSpeakerId && (
-                <p className="mb-2 rounded-lg bg-cyan-glow/10 px-3 py-2 text-sm text-cyan-100">
+                <p className="mb-2 rounded-lg bg-mw-primary/10 px-3 py-2 text-sm text-blue-100">
                   Live:{' '}
                   {players.find((p) => p.playerId === room.currentSpeakerId)
                     ?.displayName ?? '—'}
                 </p>
               )}
               {queue.length === 0 ? (
-                <p className="text-sm text-slate-500">Queue empty</p>
+                <p className="text-sm text-mw-faint">Queue empty</p>
               ) : (
                 <ol className="space-y-2">
                   {queue.map((id, index) => {
@@ -235,7 +235,7 @@ export function HostDashboard({
                         </span>
                         <button
                           type="button"
-                          className="text-xs text-cyan-glow"
+                          className="text-xs text-mw-primary"
                           onClick={() => onGrantSpeak(id)}
                         >
                           Give floor
@@ -248,14 +248,14 @@ export function HostDashboard({
             </GlassPanel>
 
             <GlassPanel>
-              <h2 className="font-mono text-xs uppercase tracking-[0.18em] text-slate-400">
+              <h2 className="mw-label text-mw-muted">
                 Roles
               </h2>
-              <ul className="mt-2 space-y-1 text-sm text-slate-200">
+              <ul className="mt-2 space-y-1 text-sm text-mw-text">
                 {players.map((p) => (
                   <li key={p.playerId} className="flex justify-between gap-2">
                     <span>{p.displayName}</span>
-                    <span className="font-mono text-amber-glow">
+                    <span className="font-mono text-mw-gold">
                       {roleById[p.playerId] ?? '—'}
                     </span>
                   </li>
@@ -266,13 +266,13 @@ export function HostDashboard({
 
           <section className="space-y-4">
             <GlassPanel className="max-h-[320px] overflow-auto">
-              <h2 className="font-mono text-xs uppercase tracking-[0.18em] text-slate-400">
+              <h2 className="mw-label text-mw-muted">
                 Host Event Log
               </h2>
-              <ul className="mt-3 space-y-2 text-sm text-slate-300">
+              <ul className="mt-3 space-y-2 text-sm text-mw-muted">
                 {[...hostLogs].reverse().slice(0, 40).map((e) => (
                   <li key={e.id} className="border-b border-white/5 pb-2">
-                    <span className="font-mono text-[10px] text-slate-500">
+                    <span className="font-mono text-[10px] text-mw-faint">
                       R{e.round} {e.phase}
                     </span>
                     <p>{e.message}</p>
@@ -282,7 +282,7 @@ export function HostDashboard({
             </GlassPanel>
 
             <GlassPanel>
-              <h2 className="font-mono text-xs uppercase tracking-[0.18em] text-slate-400">
+              <h2 className="mw-label text-mw-muted">
                 Votes
               </h2>
               <ul className="mt-2 space-y-1 text-sm">
@@ -300,10 +300,10 @@ export function HostDashboard({
                     return (
                       <li
                         key={p.playerId}
-                        className="flex justify-between text-slate-300"
+                        className="flex justify-between text-mw-muted"
                       >
                         <span>{p.displayName}</span>
-                        <span className="font-mono text-cyan-glow">
+                        <span className="font-mono text-mw-primary">
                           {targetName}
                         </span>
                       </li>
@@ -314,7 +314,7 @@ export function HostDashboard({
 
             {state.morningMessage && (
               <GlassPanel>
-                <p className="text-sm text-slate-200">{state.morningMessage}</p>
+                <p className="text-sm text-mw-text">{state.morningMessage}</p>
               </GlassPanel>
             )}
           </section>

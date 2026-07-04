@@ -4,6 +4,7 @@ import { motion } from 'framer-motion'
 import {
   Camera,
   CameraOff,
+  Crown,
   Hand,
   Mic,
   MicOff,
@@ -11,9 +12,11 @@ import {
   SignalLow,
   SignalZero,
   Skull,
-  Crown,
 } from 'lucide-react'
 import type { PlayerDoc, Role } from '@/types/game'
+import { Avatar } from '@/components/ui/Avatar'
+import { Badge } from '@/components/ui/Badge'
+import { Card } from '@/components/ui/Card'
 
 export function PlayerCard({
   player,
@@ -28,6 +31,7 @@ export function PlayerCard({
   isYou?: boolean
   compact?: boolean
 }) {
+  const speaking = player.isSpeaking && player.isAlive
   const SignalIcon =
     player.connectionQuality === 'good'
       ? Signal
@@ -35,124 +39,86 @@ export function PlayerCard({
         ? SignalLow
         : SignalZero
 
-  const speaking = player.isSpeaking && player.isAlive
-
   return (
-    <motion.article
-      layout
-      initial={{ opacity: 0, scale: 0.96 }}
-      animate={{ opacity: 1, scale: 1 }}
-      className={`relative overflow-hidden rounded-2xl border bg-gradient-to-br from-white/10 to-white/[0.02] p-4 shadow-lg backdrop-blur-md ${
-        speaking
-          ? 'border-cyan-glow shadow-[0_0_24px_rgba(34,211,238,0.35)]'
-          : 'border-white/10'
-      } ${!player.isAlive ? 'opacity-60' : ''} ${compact ? 'p-3' : ''}`}
-    >
-      <div className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-cyan-glow/10 blur-2xl" />
-      {speaking && (
-        <span className="absolute right-3 top-3 flex h-2.5 w-2.5">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan-glow opacity-75" />
-          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-cyan-glow" />
-        </span>
-      )}
-      <div className="flex items-start gap-3">
-        <div
-          className={`flex h-12 w-12 items-center justify-center rounded-2xl bg-navy-950/70 text-2xl ring-2 ${
-            speaking ? 'ring-cyan-glow animate-pulse' : 'ring-white/10'
-          }`}
-        >
-          {player.avatar}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h3 className="truncate font-semibold text-white">
-              {player.displayName}
-              {isYou ? ' (you)' : ''}
-            </h3>
-            {showRole && role && (
-              <span className="rounded-full bg-amber-glow/15 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-amber-glow">
-                {role}
-              </span>
-            )}
-          </div>
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-300">
-            <Chip active={player.isReady} on="bg-emerald-500/15 text-emerald-300">
-              {player.isReady ? 'Ready' : 'Not ready'}
-            </Chip>
-            <Chip
-              active={player.isAlive}
-              on="bg-emerald-500/15 text-emerald-300"
-              off="bg-rose-500/15 text-rose-300"
-            >
-              {player.isAlive ? (
-                'Alive'
-              ) : (
-                <span className="inline-flex items-center gap-1">
-                  <Skull className="h-3 w-3" /> Dead
-                </span>
+    <motion.div layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+      <Card
+        hover
+        className={`relative ${compact ? 'p-3' : 'p-4'} ${
+          speaking ? 'border-mw-primary/50 shadow-mw-blue' : ''
+        } ${!player.isAlive ? 'opacity-70' : ''}`}
+      >
+        <div className="flex items-start gap-3">
+          <Avatar
+            name={player.displayName}
+            speaking={speaking}
+            dead={!player.isAlive}
+            size={compact ? 'sm' : 'md'}
+          />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="truncate font-display text-sm font-semibold text-mw-text">
+                {player.displayName}
+                {isYou ? (
+                  <span className="ml-1 text-mw-muted">(you)</span>
+                ) : null}
+              </h3>
+              {showRole && role && <Badge tone="gold">{role}</Badge>}
+            </div>
+
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              <Badge tone={player.isReady ? 'success' : 'neutral'}>
+                {player.isReady ? 'Ready' : 'Waiting'}
+              </Badge>
+              <Badge tone={player.isAlive ? 'success' : 'danger'}>
+                {player.isAlive ? (
+                  'Alive'
+                ) : (
+                  <span className="inline-flex items-center gap-1">
+                    <Skull className="h-3 w-3" /> Dead
+                  </span>
+                )}
+              </Badge>
+              {player.raisedHand && (
+                <Badge tone="warning">
+                  <Hand className="h-3 w-3" /> Hand
+                </Badge>
               )}
-            </Chip>
-            {player.raisedHand && (
-              <Chip active on="bg-amber-glow/20 text-amber-200">
-                <Hand className="h-3 w-3" /> Hand
-              </Chip>
-            )}
-            {!player.isConnected && (
-              <Chip active on="bg-rose-500/20 text-rose-200">
-                Disconnected
-              </Chip>
-            )}
+              {player.hasVoted && <Badge tone="primary">Voted</Badge>}
+              {!player.isConnected && <Badge tone="danger">Offline</Badge>}
+            </div>
           </div>
         </div>
-      </div>
 
-      <div className="mt-3 flex items-center gap-3 text-slate-300">
-        {player.micEnabled ? (
-          <Mic className="h-4 w-4 text-cyan-glow" />
-        ) : (
-          <MicOff className="h-4 w-4 text-slate-500" />
-        )}
-        {player.cameraEnabled ? (
-          <Camera className="h-4 w-4 text-cyan-glow" />
-        ) : (
-          <CameraOff className="h-4 w-4 text-slate-500" />
-        )}
-        <SignalIcon
-          className={`h-4 w-4 ${
-            player.isConnected ? 'text-emerald-400' : 'text-rose-400'
-          }`}
-        />
-      </div>
-    </motion.article>
-  )
-}
-
-function Chip({
-  children,
-  active,
-  on,
-  off = 'bg-white/5 text-slate-400',
-}: {
-  children: React.ReactNode
-  active?: boolean
-  on: string
-  off?: string
-}) {
-  return (
-    <span
-      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ${
-        active ? on : off
-      }`}
-    >
-      {children}
-    </span>
+        <div className="mt-3 flex items-center gap-3 text-mw-muted">
+          {player.micEnabled && !player.hostMuted ? (
+            <Mic className="h-4 w-4 text-mw-primary" strokeWidth={1.75} />
+          ) : (
+            <MicOff className="h-4 w-4" strokeWidth={1.75} />
+          )}
+          {player.cameraEnabled ? (
+            <Camera className="h-4 w-4 text-mw-primary" strokeWidth={1.75} />
+          ) : (
+            <CameraOff className="h-4 w-4" strokeWidth={1.75} />
+          )}
+          <SignalIcon
+            className={`h-4 w-4 ${
+              player.isConnected ? 'text-mw-success' : 'text-mw-danger'
+            }`}
+            strokeWidth={1.75}
+          />
+          <span className="font-mono text-[10px] uppercase tracking-wider">
+            {player.isConnected ? player.connectionQuality : 'offline'}
+          </span>
+        </div>
+      </Card>
+    </motion.div>
   )
 }
 
 export function HostBadge() {
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-amber-glow/15 px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-amber-glow">
+    <Badge tone="gold">
       <Crown className="h-3 w-3" /> Game Master
-    </span>
+    </Badge>
   )
 }
