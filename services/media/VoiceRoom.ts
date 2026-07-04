@@ -4,10 +4,9 @@ import {
   Room,
   RoomEvent,
   Track,
-  type LocalAudioTrack,
-  type LocalVideoTrack,
   type RemoteParticipant,
 } from 'livekit-client'
+import { MeshVoice } from './MeshVoice'
 
 export type VoiceConnectionState =
   | 'idle'
@@ -19,22 +18,16 @@ export type VoiceConnectionState =
 export interface VoiceCallbacks {
   onConnection?: (state: VoiceConnectionState) => void
   onSpeaking?: (identity: string, speaking: boolean) => void
+  onPeerCount?: (count: number) => void
   onError?: (message: string) => void
 }
 
 /**
- * LiveKit-backed voice/video room.
- * Falls back to local-only media when LiveKit is not configured.
+ * Voice layer: LiveKit when configured, otherwise WebRTC mesh via Firestore.
  */
 export class VoiceRoomService {
   private room: Room | null = null
-  private localAudio: LocalAudioTrack | null = null
-  private localVideo: LocalVideoTrack | null = null
-  private localStream: MediaStream | null = null
-  private analyser: AnalyserNode | null = null
-  private audioCtx: AudioContext | null = null
-  private speakTimer: number | null = null
-  private mode: 'livekit' | 'local' | 'none' = 'none'
+  private mode: 'livekit' | 'mesh' | 'none' = 'none'
   private callbacks: VoiceCallbacks = {}
 
   configure(callbacks: VoiceCallbacks) {
@@ -42,15 +35,17 @@ export class VoiceRoomService {
   }
 
   async connect(input: {
+    roomId: string
     roomName: string
     identity: string
     name: string
     enableMic: boolean
-    enableCam: boolean
+    enableCam?: boolean
   }): Promise<VoiceConnectionState> {
     await this.disconnect()
     this.callbacks.onConnection?.('connecting')
 
+    // Prefer LiveKit when available
     try {
       const res = await fetch('/api/livekit/token', {
         method: 'POST',
@@ -64,24 +59,38 @@ export class VoiceRoomService {
       const data = (await res.json()) as {
         token?: string
         url?: string
-        configured?: boolean
-        error?: string
       }
 
       if (res.ok && data.token && data.url) {
         await this.connectLiveKit(data.url, data.token, input)
         return 'connected'
       }
+    } catch {
+      // fall through to mesh
+    }
 
-      // Local fallback — mic meter + camera preview only
-      await this.connectLocal(input.enableMic, input.enableCam)
-      this.callbacks.onConnection?.('unavailable')
-      return 'unavailable'
+    // WebRTC mesh — real audio between peers, no LiveKit required
+    try {
+      MeshVoice.configure({
+        onConnection: (s) => this.callbacks.onConnection?.(s),
+        onSpeaking: (id, speaking) => this.callbacks.onSpeaking?.(id, speaking),
+        onPeerCount: (n) => this.callbacks.onPeerCount?.(n),
+        onError: (m) => this.callbacks.onError?.(m),
+      })
+      await MeshVoice.connect({
+        roomId: input.roomId,
+        uid: input.identity,
+        name: input.name,
+        enableMic: input.enableMic,
+      })
+      this.mode = 'mesh'
+      return 'connected'
     } catch (e) {
       this.callbacks.onError?.(
-        e instanceof Error ? e.message : 'Voice connection failed',
+        e instanceof Error ? e.message : 'Could not start voice',
       )
       this.callbacks.onConnection?.('disconnected')
+      this.mode = 'none'
       return 'disconnected'
     }
   }
@@ -89,11 +98,7 @@ export class VoiceRoomService {
   private async connectLiveKit(
     url: string,
     token: string,
-    input: {
-      identity: string
-      enableMic: boolean
-      enableCam: boolean
-    },
+    input: { identity: string; enableMic: boolean; enableCam?: boolean },
   ) {
     const room = new Room({
       adaptiveStream: true,
@@ -107,7 +112,6 @@ export class VoiceRoomService {
 
     room.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
       const ids = new Set(speakers.map((s) => s.identity))
-      // Clear then set active
       room.remoteParticipants.forEach((p) => {
         this.callbacks.onSpeaking?.(p.identity, ids.has(p.identity))
       })
@@ -119,6 +123,14 @@ export class VoiceRoomService {
       }
     })
 
+    room.on(RoomEvent.TrackSubscribed, (track) => {
+      if (track.kind === 'audio') {
+        const el = track.attach()
+        el.autoplay = true
+        document.body.appendChild(el)
+      }
+    })
+
     room.on(RoomEvent.Disconnected, () => {
       this.callbacks.onConnection?.('disconnected')
     })
@@ -127,57 +139,26 @@ export class VoiceRoomService {
     this.room = room
     this.mode = 'livekit'
 
-    if (input.enableMic) {
-      await room.localParticipant.setMicrophoneEnabled(true)
-    }
+    await room.localParticipant.setMicrophoneEnabled(input.enableMic)
     if (input.enableCam) {
       await room.localParticipant.setCameraEnabled(true)
     }
 
+    // Attach any already-subscribed remote audio
+    room.remoteParticipants.forEach((p) => this.attachRemoteAudio(p))
+
     this.callbacks.onConnection?.('connected')
   }
 
-  private async connectLocal(enableMic: boolean, enableCam: boolean) {
-    if (!enableMic && !enableCam) {
-      this.mode = 'none'
-      return
-    }
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: enableMic
-        ? {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          }
-        : false,
-      video: enableCam,
+  private attachRemoteAudio(participant: RemoteParticipant) {
+    participant.audioTrackPublications.forEach((pub) => {
+      const track = pub.track
+      if (track) {
+        const el = track.attach()
+        el.autoplay = true
+        document.body.appendChild(el)
+      }
     })
-    this.localStream = stream
-    this.mode = 'local'
-
-    if (enableMic) {
-      this.audioCtx = new AudioContext()
-      const source = this.audioCtx.createMediaStreamSource(stream)
-      this.analyser = this.audioCtx.createAnalyser()
-      this.analyser.fftSize = 512
-      source.connect(this.analyser)
-      this.startLocalSpeakDetect()
-    }
-  }
-
-  private startLocalSpeakDetect() {
-    if (!this.analyser) return
-    const data = new Uint8Array(this.analyser.frequencyBinCount)
-    const tick = () => {
-      if (!this.analyser) return
-      this.analyser.getByteFrequencyData(data)
-      const avg = data.reduce((a, b) => a + b, 0) / data.length
-      const speaking = avg > 18
-      // identity filled by hook
-      this.callbacks.onSpeaking?.('__local__', speaking)
-      this.speakTimer = window.setTimeout(tick, 120)
-    }
-    tick()
   }
 
   async setMicEnabled(enabled: boolean) {
@@ -185,62 +166,15 @@ export class VoiceRoomService {
       await this.room.localParticipant.setMicrophoneEnabled(enabled)
       return
     }
-    this.localStream?.getAudioTracks().forEach((t) => {
-      t.enabled = enabled
-    })
+    if (this.mode === 'mesh') {
+      MeshVoice.setMicEnabled(enabled)
+    }
   }
 
   async setCamEnabled(enabled: boolean) {
     if (this.mode === 'livekit' && this.room) {
       await this.room.localParticipant.setCameraEnabled(enabled)
-      return
     }
-    this.localStream?.getVideoTracks().forEach((t) => {
-      t.enabled = enabled
-    })
-  }
-
-  getLocalVideoElement(el: HTMLVideoElement | null) {
-    if (!el) return
-    if (this.mode === 'livekit' && this.room) {
-      const pub = this.room.localParticipant.getTrackPublication(Track.Source.Camera)
-      const track = pub?.track
-      if (track) {
-        track.attach(el)
-      }
-      return
-    }
-    if (this.localStream) {
-      el.srcObject = this.localStream
-      void el.play().catch(() => undefined)
-    }
-  }
-
-  attachRemoteVideos(
-    container: HTMLElement,
-    render: (identity: string, el: HTMLVideoElement) => void,
-  ) {
-    if (!this.room) return
-    this.room.remoteParticipants.forEach((p) => {
-      this.attachParticipant(p, container, render)
-    })
-    this.room.on(RoomEvent.TrackSubscribed, (_track, _pub, participant) => {
-      this.attachParticipant(participant, container, render)
-    })
-  }
-
-  private attachParticipant(
-    participant: RemoteParticipant,
-    _container: HTMLElement,
-    render: (identity: string, el: HTMLVideoElement) => void,
-  ) {
-    const el = document.createElement('video')
-    el.autoplay = true
-    el.playsInline = true
-    participant.videoTrackPublications.forEach((pub) => {
-      pub.track?.attach(el)
-    })
-    render(participant.identity, el)
   }
 
   getMode() {
@@ -248,15 +182,9 @@ export class VoiceRoomService {
   }
 
   async disconnect() {
-    if (this.speakTimer) window.clearTimeout(this.speakTimer)
-    this.speakTimer = null
-    this.analyser = null
-    if (this.audioCtx) {
-      void this.audioCtx.close()
-      this.audioCtx = null
+    if (this.mode === 'mesh') {
+      await MeshVoice.disconnect()
     }
-    this.localStream?.getTracks().forEach((t) => t.stop())
-    this.localStream = null
     if (this.room) {
       await this.room.disconnect()
       this.room = null

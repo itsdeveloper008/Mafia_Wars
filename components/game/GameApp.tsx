@@ -188,6 +188,9 @@ export default function GameApp() {
           <HostDashboard
             session={session}
             voiceConnection={voice.connection}
+            peerCount={voice.peerCount}
+            hostMicOn={voice.hostMicOn}
+            onToggleHostMic={voice.toggleHostMic}
             onPause={(paused) => void actions?.pause(paused)}
             onSkip={() => void actions?.skipPhase()}
             onEnd={() => void actions?.playAgain()}

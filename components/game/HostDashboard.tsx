@@ -41,6 +41,9 @@ export function HostDashboard({
   onToggleVoice,
   onToggleVideo,
   voiceConnection,
+  peerCount,
+  hostMicOn,
+  onToggleHostMic,
 }: {
   session: GameSession
   onPause: (paused: boolean) => void
@@ -57,6 +60,9 @@ export function HostDashboard({
   onToggleVoice: (on: boolean) => void
   onToggleVideo: (on: boolean) => void
   voiceConnection?: string
+  peerCount?: number
+  hostMicOn?: boolean
+  onToggleHostMic?: () => void
 }) {
   const { room, state, players, secrets, votes, hostLogs } = session
   const roleById = Object.fromEntries(secrets.map((s) => [s.playerId, s.role]))
@@ -200,11 +206,32 @@ export function HostDashboard({
                   {room.settings.voiceLocked ? 'Unlock Voice' : 'Lock Voice'}
                 </GhostButton>
                 <GhostButton onClick={onClearSpeaker}>Clear Floor</GhostButton>
+                <GhostButton onClick={onToggleHostMic}>
+                  {hostMicOn ? (
+                    <Mic className="h-4 w-4" />
+                  ) : (
+                    <MicOff className="h-4 w-4" />
+                  )}
+                  {hostMicOn ? 'Host Mic On' : 'Host Mic Off'}
+                </GhostButton>
               </div>
               <p className="mt-2 font-mono text-[10px] uppercase tracking-wider text-mw-faint">
-                Voice: {voiceConnection ?? 'idle'} · Mode:{' '}
+                Voice: {voiceConnection ?? 'idle'}
+                {typeof peerCount === 'number' ? ` · ${peerCount} in channel` : ''}
+                {' · '}
                 {room.settings.discussionMode}
               </p>
+              {voiceConnection === 'connected' && (
+                <p className="mt-1 text-xs text-mw-success">
+                  You are in the voice channel and can hear players.
+                </p>
+              )}
+              {(voiceConnection === 'disconnected' ||
+                voiceConnection === 'unavailable') && (
+                <p className="mt-1 text-xs text-mw-danger">
+                  Voice failed — allow microphone permission and refresh.
+                </p>
+              )}
               <DangerButton className="mt-3 w-full" onClick={onEnd}>
                 <Flag className="h-4 w-4" /> End / Reset Lobby
               </DangerButton>

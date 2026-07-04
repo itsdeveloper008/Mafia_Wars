@@ -39,6 +39,14 @@ service cloud.firestore {
       match /hostLogs/{logId} {
         allow read, write: if true;
       }
+
+      match /voicePeers/{peerId} {
+        allow read, write: if true;
+      }
+
+      match /voiceSignals/{signalId} {
+        allow read, write: if true;
+      }
     }
 
     match /matchHistory/{matchId} {
